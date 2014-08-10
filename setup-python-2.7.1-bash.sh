@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Gets the name of the operating system i.e Linux_x86_64
 export OS=`uname`_`uname -m`
