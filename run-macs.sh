@@ -22,7 +22,7 @@ do
         *)
             echo "Invalid option!"; exit 1 ;;
     esac
-done#}}}
+done #}}}
 
 target_dir="$(dirname "$ctrl")"/macs
 target_base="$(basename "$ctrl")"
@@ -35,4 +35,5 @@ cd "$target_dir"
 macs14 \
     -t "$treat" -c "$ctr" \
     --gsize="$genome_esize" --name="$output" \
-    --format=BAM -S --diag \
+    --format=BAM -S --diag
+

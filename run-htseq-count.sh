@@ -32,7 +32,7 @@ do
                     feature="$2"; feature_id=$feature"_id"; shift 2 ;;
             esac ;;
     esac
-done#}}}
+done #}}}
 
 target_dir="$(dirname "$bam")/htseq"
 target_base="$(basename "$bam")"
