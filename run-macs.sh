@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 
 #TODO: set the files to a variable but figure out how to format ls output
+# parse arguments
+ARGS=$(getopt -o c:t:g: -l "control:,treatment:,genome:" -n "run-macs.sh" -- "$@")
 
-while getopts ":c:t:o:g:" opt; do
-    case $opt in
-        c)
-            ctrl=${OPTARG} ;;
-        t)
-            treat=${OPTARG} ;;
-        o)
-            out=$(sed 's/\$//' <<< ${OPTARG}) ;;
-        g)
-            genome_size=${OPTARG} ;;
-        \?)
-            echo "Invalid option: -$OPTARG" >&2
-            exit 1
-            ;;
-        :)
-            echo "Option -$OPTARG requires an argument." >&2
-            exit 1
-            ;;
+# Bad arguments
+if [ $? -ne 0 ]
+then
+    exit 1
+fi
+eval set -- "$ARGS"
+
+while true
+do
+    case "$1" in
+        -c | --control)
+            ctrl="$2"; shift 2 ;;
+        -t | --treatment)
+            treat="$2"; shift 2 ;;
+        -g | --genome)
+            genome_size="$2"; shift 2 ;;
+        *)
+            echo "Invalid option!"; exit 1 ;;
     esac
 done
 
