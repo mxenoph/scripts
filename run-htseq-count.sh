@@ -4,7 +4,7 @@
 ARGS=$(getopt -o a:b:o:t:: -l "annotation:,bam:,options::,type::" -n "run-htseq-count.sh" -- "$@")
 
 # Bad arguments
-if [ $? -ne 0 ];
+if [ $? -ne 0 ]
 then
     exit 1
 fi
