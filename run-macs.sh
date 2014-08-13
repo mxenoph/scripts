@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-#TODO: set the files to a variable but figure out how to format ls output
-# parse arguments
+# Parse arguments#{{{
 ARGS=$(getopt -o c:t:g: -l "control:,treatment:,genome:" -n "run-macs.sh" -- "$@")
 
 # Bad arguments
@@ -19,24 +18,21 @@ do
         -t | --treatment)
             treat="$2"; shift 2 ;;
         -g | --genome)
-            genome_size="$2"; shift 2 ;;
+            genome_esize="$2"; shift 2 ;;
         *)
             echo "Invalid option!"; exit 1 ;;
     esac
-done
+done#}}}
 
-if [ ! -d "$out/macs" ]
-then
-    mkdir "$out/macs"
-fi
-cd "$out/macs"
+target_dir="$(dirname "$ctrl")"/macs
+target_base="$(basename "$ctrl")"
+output="${target_base/.bam//}"
 
-IFS=';' read -a arr <<< "$treat"
+mkdir -p "$target_dir"
+# MACS only save output in working directory
+cd "$target_dir"
 
-for t in "${arr[@]}"
-do
-    n=$(sed 's/\.bam//' <<< $t)
-    cmd=`echo "bsub -n 4 -M 20000 -J MACS macs14 -t $t -c $ctrl --format=BAM -S --name=$n --gsize=$genome_size --diag --wig"`;
-#    echo $cmd;
-    $cmd;
-done
+macs14 \
+    -t "$treat" -c "$ctr" \
+    --gsize="$genome_esize" --name="$output" \
+    --format=BAM -S --diag \
