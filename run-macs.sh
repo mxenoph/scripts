@@ -19,8 +19,10 @@ do
             treat="$2"; shift 2 ;;
         -g | --genome)
             genome_esize="$2"; shift 2 ;;
-        *)
-            echo "Invalid option!"; exit 1 ;;
+        --)
+            shift ; break ;;
+        *) 
+            echo "Error! Invalid option provided"; exit 1 ;;
     esac
 done #}}}
 

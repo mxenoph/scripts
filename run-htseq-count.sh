@@ -31,6 +31,9 @@ do
                 *)
                     feature="$2"; feature_id=$feature"_id"; shift 2 ;;
             esac ;;
+        --)
+            shift ; break ;;
+        *) echo "Error! Invalid option provided"; exit 1 ;;
     esac
 done #}}}
 
