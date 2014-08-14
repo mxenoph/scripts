@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Notes: 
+# input files must have extension .fastq.gz
+
 # Parse arguments#{{{
 ARGS=$(getopt -o f:g:x:p: -l "fastq:,genome:index:nparallel:" -n "run-gsnap.sh" -- "$@")
 
@@ -21,17 +24,28 @@ do
             N_JOBS="$2"; shift 2 ;;
         -x | --index)
             INDEX="$2"; shift 2 ;;
+        --)
+            shift ; break ;;
+        *) echo "Error! Invalid option provided"; exit 1 ;;
     esac
 done
 #}}}
 
-echo $fastq;
-exit 1;
 # Output and basenames#{{{
-target_dir="$(dirname "$fastq")"/gsnap
-target_base="$(basename "$fastq")"
-output="${target_dir}/${target_base/.fastq.gz/.$INDEX/}"#}}}
-
+pattern=" "
+if [[ "$fastq" =~ "$pattern" ]]
+then
+    input=($fastq)  # This is an array
+    tmp=${input[0]/_1_*//}
+    target_dir="$(dirname "$tmp")"/gsnap
+    target_base="$(basename "$tmp")"
+    output="${target_dir}/${target_base}.$INDEX"
+else
+    target_dir="$(dirname "$fastq")"/gsnap
+    target_base="$(basename "$fastq")"
+    output="${target_dir}/${target_base/.fastq.gz/.$INDEX}"
+fi
+#}}}
 
 # Genome directories and splice-sites paths#{{{
 genome_dir=/nfs/research2/bertone/common/genome
