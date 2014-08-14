@@ -1,30 +1,40 @@
 #!/usr/bin/env bash
 
+# Parse arguments#{{{
+ARGS=$(getopt -o f:g: -l "fastq:,genome:" -n "run-gsnap.sh" -- "$@")
 
-#out_dir only for .err file
-out_dir=$1
-files=$2
-genome=$3
-
-if [ ! -d "$out_dir" ]
+# Bad arguments
+if [ $? -ne 0 ]
 then
- mkdir "$out_dir"
- echo -e "Creating $out_dir"
+    exit 1
 fi
+eval set -- "$ARGS"
 
-# Options:
+while true
+do
+    case "$1" in
+        -f | --fastq)
+            fastq="$2"; shift 2 ;;
+        -g | --genome)
+            genome="$2"; shift 2 ;;
+    esac
+done
+#}}}
+
+# GSNAP Options:#{{{
 # -m: number of mismatches (for 75bp set to 4 or 5);
 # -i: indel penalty (default=2)...<2 can lead to FP at the end of the read
 # -N: look for novel splicing
 # -w: for novel splicing event - so it doesn't consider a splice junction that is too big (runs from one end of the chromosome to the other)
 # -n: number of paths to print
 # -Q: print nothing if >n paths
-# -O: relevant if more than one worker thread (-t) -> prints output in the same order as input
+# -O: relevant if more than one worker thread (-t) -> prints output in the same order as input#}}}
 
 N_THREADS=10
-#kmer size to use in genome database--if not specified highest available in the db is used
+# kmer size to use in genome database -- if not specified highest available in the db is used
 #K_MER=15
-#For running with -q option
+
+# For running with -q option
 N_JOBS=20
 MEM=25000
 mismatch=7
