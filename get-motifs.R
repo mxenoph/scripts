@@ -1,4 +1,4 @@
-#!/usr/bin/env Rscript --slave
+#!/usr/bin/env Rscript
 
 # Parsing command line arguments and create output subdirectories# {{{
 library(argparse)
@@ -14,6 +14,7 @@ args <- parser$parse_args()
 meme <- file.path(args$out, 'meme', '')
 plots <- file.path(args$out, 'plots', '')
 dir.create(meme)
+dir.create(plots)
 
 #args <- commandArgs(trailingOnly=TRUE)
 #This has to be the peaks.xls
@@ -67,11 +68,10 @@ names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=":"
 
 # Get sequences for peaks
 seqMotifs <- function(summits, n){
-    stop(summits[1:n])
-    tmp <- getSeq(Mmusculus, summits[n], as.character=FALSE)
+    tmp <- getSeq(Mmusculus, summits[1:n], as.character=FALSE)
     seqs <- as.data.frame(tmp)
     colnames(seqs) <- 'sequence'
-    values(summits[n]) <- cbind(values(summits[n]), seqs)
+    values(summits[1:n]) <- cbind(values(summits[1:n]), seqs)
     print(summits)
     stop(-1)
 
@@ -80,7 +80,7 @@ seqMotifs <- function(summits, n){
 #    colnames(s) <- 'seq'
 #    values(summits) <- cbind(values(summits), s)
     names(seqs) <- names(summits)
-    writeXStringSet(seqs, file= paste(out, prefix, ".all.fa", sep=""), "fasta", append=FALSE)
+    writeXStringSet(seqs, file= paste(out, prefix, "-top", n, ".fa", sep=""), "fasta", append=FALSE)
 }
 
 seqMotifs(summits, args$npeaks)
