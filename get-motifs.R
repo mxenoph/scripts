@@ -67,34 +67,29 @@ summits <- summits[order(-values(summits)$score)]
 names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=":")# }}}
 
 # Get sequences for peaks
-seqMotifs <- function(summits, n){
-    tmp <- getSeq(Mmusculus, summits[1:n], as.character=FALSE)
-    seqs <- as.data.frame(tmp)
-    colnames(seqs) <- 'sequence'
-    values(summits[1:n]) <- cbind(values(summits[1:n]), seqs)
-    print(summits)
-    stop(-1)
+seq_motifs <- function(summits, n){
+    seqs <- getSeq(Mmusculus, summits[1:n], as.character=FALSE)
+    # make a dataframe holding information on FE, FDR, sequence
+    names(seqs) <- paste(names(summits)[1:n],
+                            as.vector(values(summits)[['FE']][1:n]),
+                            as.vector(values(summits)[['fdr']][1:n]), sep='|')
 
-    #add seq info to grange
-#    s <- as.data.frame(seqs)
-#    colnames(s) <- 'seq'
-#    values(summits) <- cbind(values(summits), s)
-    names(seqs) <- names(summits)
-    writeXStringSet(seqs, file= paste(out, prefix, "-top", n, ".fa", sep=""), "fasta", append=FALSE)
+    writeXStringSet(seqs, file= paste(meme, prefix, "-top", n, ".fa", sep=""), "fasta", append=FALSE)
 }
 
-seqMotifs(summits, args$npeaks)
-
-n <- 300
-print(paste0("Getting sequences for top ", n, " peaks"))
-writeXStringSet(seqs[names(seqs) %in% names(summits)[1:n]], file= paste(out, prefix, ".top", n, ".fa", sep=""), "fasta", append=FALSE)
-
-print(paste0("Getting sequences for bottom ", n, " peaks"))
-writeXStringSet(seqs[names(seqs) %in% names(summits)[length(summits)-(n-1):length(summits)]], file= paste(out, prefix, ".bottom", n, ".fa", sep=""), "fasta", append=FALSE)
-
-print(paste0("Getting sequences for random ", n, " peaks"))
-index <- sample(1:length(summits), size=n, replace=FALSE)
-writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
+seq_motifs(summits, args$npeaks)
+stop(-1)
+#n <- 300# {{{
+#print(paste0("Getting sequences for top ", n, " peaks"))
+#writeXStringSet(seqs[names(seqs) %in% names(summits)[1:n]], file= paste(out, prefix, ".top", n, ".fa", sep=""), "fasta", append=FALSE)
+#
+#print(paste0("Getting sequences for bottom ", n, " peaks"))
+#writeXStringSet(seqs[names(seqs) %in% names(summits)[length(summits)-(n-1):length(summits)]], file= paste(out, prefix, ".bottom", n, ".fa", sep=""), "fasta", append=FALSE)
+#
+#print(paste0("Getting sequences for random ", n, " peaks"))
+#index <- sample(1:length(summits), size=n, replace=FALSE)
+#writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
+## }}}
 
 fa.f <- list.files(gsub("/$", '', out), pattern=paste0(prefix, ".*", n, ".fa"), full.names=TRUE)
 maxsize <- max(sapply(fa.f, function(f){
@@ -108,7 +103,7 @@ maxsize <- max(sapply(fa.f, function(f){
 # revcomp =  allow sites on + or - strands
 # maxsize = minimum dataset size in characters
 # -evt = stop if motif E-value greater than <evt>
-meme.param <- paste0(" -nmotifs 3 -minsites 100 -minw 12 -maxw 35 -revcomp -dna -maxsize ", maxsize, " -oc ")
+meme.param <- paste0(" -nmotifs 3 -minsites 100 -minw 6 -maxw 35 -revcomp -dna -maxsize ", maxsize, " -oc ")
 cluster.param <- 'bsub -M 20000 -R "rusage[mem=10000]"'
 
 for (fa in fa.f){
