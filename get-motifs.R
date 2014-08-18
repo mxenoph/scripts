@@ -3,6 +3,8 @@
 # Parsing command line arguments and create output subdirectories# {{{
 library(argparse)
 library(tools)
+source("~/source/Rscripts/annotation-functions.R")
+
 parser <-  ArgumentParser(description="Perform motif analysis")
 parser$add_argument('-x', '--peaks', metavar= "file", required='True', type= "character", help= "MACS generated excel file for called peaks")
 parser$add_argument('-a', '--assembly', type= "character", default='mm9', help= "Give preferred assembly e.g. mm9. Default: mm9")
@@ -17,14 +19,10 @@ outputPath <- file.path(args$out, 'meme', basename(file_path_sans_ext(args$peaks
 dir.create(outputPath, recursive= TRUE)
 output <- file.path(outputPath, paste0(args$mode, args$npeaks))
 
-#assembly= 'mm9' # convert to a config that will have assembly\tchromfilepath\tannotationfilepath
-if(grepl('mm10', args$assembly, ignore.case=TRUE)){
-      chr.sizes <- "/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_10/mm10.chrom.sizes"
-}
+# function in annotation-functions.R
+annotationInfo(tolower(args$assembly))
 
-if(grepl('mm9', args$assembly, ignore.case=TRUE)){
-      chr.sizes <- "/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/mm9.chrom.sizes"
-}# }}}
+# }}}
 
 # Import some libraries & Turn off warning messages for loading the packages-globally# {{{
 options(warn=-1)
@@ -44,9 +42,6 @@ seq_motifs <- function(summits, n){
 
     writeXStringSet(seqs, file= paste0(output, '.fa'), "fasta", append=FALSE)
 }# }}}
-
-#peaks <- read.table("/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/hendrichChIP/macs/E12.M2_peaks.xls", header=TRUE, sep="\t", stringsAsFactors=FALSE)
-#peaks <- read.table(args$peaks, header=TRUE, sep="\t", stringsAsFactors=FALSE)
 
 # Read in peaks and get summits# {{{
 peaks <- macs2GRanges(args$peaks)
