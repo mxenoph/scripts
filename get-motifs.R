@@ -16,8 +16,8 @@ parser$add_argument('-m', '--mode', type= "character", default= 'top',  help= "L
 args <- parser$parse_args()
 
 outputPath <- file.path(args$out, 'meme', basename(file_path_sans_ext(args$peaks)))
-dir.create(outputPath, recursive= TRUE)
 output <- file.path(outputPath, paste0(args$mode, args$npeaks))
+dir.create(output, recursive= TRUE)
 
 # function in annotation-functions.R
 annotationInfo(tolower(args$assembly))
@@ -32,6 +32,48 @@ source("~/local/granges.functions.R")
 #Turn warnings back on
 options(warn=0)# }}}
 
+
+# Functions # {{{
+
+# Functions by konrad Rudolph# {{{
+# Used like that in Konrad's parser of pspm
+map <- base::Map
+
+# This uses R's peculiarities in argument matching explained here:
+# <http://stat.ethz.ch/R-manual/R-devel/doc/manual/R-lang.html#Argument-matching>
+# `.expr` starts with a dot to allow `expr` being used in the actual
+# expression.
+let <- function (.expr, ...)
+        eval(substitute(.expr), list2env(list(...), parent = parent.frame()))
+
+#' Create a closure over a given environment for the specified formals and body.
+closure <- function (formals, body, env)
+        eval(call('function', as.pairlist(formals), body), env)
+#' Create a list of empty symbols, with names set
+symlist <- function (names)
+        setNames(Map(function (p) quote(expr = ), names), names)
+
+#' A shortcut to create a function
+#'
+#' @note Using \code{.(args = body)} is analogous to using
+#' \code{function (args) body} with one exception: \code{.} arguments do not
+#' support defaults.
+#' Since its purpose is mainly for lambdas in higher-order list functions, this
+#' functionality is not needed.
+. <- function (...) {
+    args <- match.call(expand.dots = FALSE)$...
+    last <- length(args)
+    params <- symlist(c(args[-last], names(args)[[last]]))
+    if (length(args) > 1 && length(params) != length(args))
+        stop('Must be of the form `fun(a, b = expr)`')
+    for (arg in args[-last])
+        if (! is.name(arg))
+            stop('Invalid argument specifier: ', arg)
+
+    closure(params, args[[last]], parent.frame())
+}# }}}
+
+
 # Get sequences for peaks # {{{
 seq_motifs <- function(summits, n){
     seqs <- getSeq(Mmusculus, summits[1:n], as.character=FALSE)
@@ -41,12 +83,41 @@ seq_motifs <- function(summits, n){
                             as.vector(values(summits)[['fdr']][1:n]), sep='|')
 
     writeXStringSet(seqs, file= paste0(output, '.fa'), "fasta", append=FALSE)
+za}# }}}
+
+# Parse motifs and E-values from MEME output. From Konrad Rudolph  # {{{
+parsePspm <- function (results) {
+    # from Konrad what the hell is the output?
+    # Parse output raw text file and retrieve PSSMs for all motifs.
+    # Note: we could also parse the XML file using XPath but the XML output file
+    # is quite frankly not very nice. Parsing the raw text is easier. Fail.
+    extractHeader <- function (name, header)
+        let(match = regexpr(sprintf('(?<=%s= )\\S+', name), header, perl = TRUE),
+            as.numeric(regmatches(header, match)))
+
+    file <- file.path(results, 'meme.txt')
+    lines <- readLines(file)
+    start <- grep('^\tMotif \\d+ position-specific probability matrix', lines) + 2
+    length <- extractHeader('w', lines[start])
+    nsites <- extractHeader('nsites', lines[start])
+    evalue <- extractHeader('E', lines[start])
+    matrix <- map(.(start, end = read.table(text = paste(lines[start : end],
+                                                         collapse = '\n'),
+                                            col.names = c('A', 'C', 'G', 'T'))),
+                  start + 1, start + length)
+
+    map(.(matrix, nsites, evalue =
+          let(str = list(matrix = matrix, nsites = nsites, e = evalue),
+              structure(str, class = 'pspm'))),
+        matrix, nsites, evalue)
 }# }}}
+
+# }}}
 
 # Read in peaks and get summits# {{{
 peaks <- macs2GRanges(args$peaks)
 peaks <- peaks[order(-values(peaks)$score)]
-peaks <- add.seqlengths(peaks, chr.sizes)
+peaks <- add.seqlengths(peaks, chr_size)
 
 #why just looking at + strand?
 summits <- GRanges(seqnames= seqnames(peaks),
@@ -65,7 +136,7 @@ summits <- summits[width(summits) != 0]
 summits <- summits[order(-values(summits)$score)]
 names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=":")# }}}
 
-seq_motifs(summits, args$npeaks)
+#seq_motifs(summits, args$npeaks)
 
 #n <- 300# {{{
 #print(paste0("Getting sequences for top ", n, " peaks"))
@@ -79,42 +150,24 @@ seq_motifs(summits, args$npeaks)
 #writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
 ## }}}
 
-memeBin <- 'meme'
-# possibly don't limit to 3 motifs but filter by E
-system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
-               memeBin,
-               paste0(output, '.fa'),
-               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2),
-               file.path(output, 'result')
-               ))
 
-parsePspm <- function (results) {
-    # from Konrad what the hell is the output?
-    # Parse output raw text file and retrieve PSSMs for all motifs.
-    # Note: we could also parse the XML file using XPath but the XML output file
-    # is quite frankly not very nice. Parsing the raw text is easier. Fail.
-    extractHeader <- function (name, header)
-        let(match = regexpr(sprintf('(?<=%s= )\\S+', name), header, perl = TRUE),
-            as.numeric(regmatches(header, match)))
+meme <- function(output) {
+    memeBin <- 'meme'
+    # possibly don't limit to 3 motifs but filter by E
+    #system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
+    #               memeBin,
+    #               paste0(output, '.fa'),
+    #               file.path(output, 'result'),
+    #               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+    #               ))
+    #
     
-    file <- file.path(results, 'meme.txt')
-    lines <- readLines(file)
-    start <- grep('^\tMotif \\d+ position-specific probability matrix', lines) + 2
-    length <- extractHeader('w', lines[start])
-    nsites <- extractHeader('nsites', lines[start])
-    evalue <- extractHeader('E', lines[start])
-    matrix <- map(.(start, end = read.table(text = paste(lines[start : end],
-                                                         collapse = '\n'),
-                                            col.names = c('A', 'C', 'G', 'T'))),
-                  start + 1, start + length)
-
-    map(.(matrix, nsites, evalue =
-          let(str = list(matrix = matrix, nsites = nsites, e = evalue),
-              structure(str, class = 'pspm'))),
-        matrix, nsites, evalue)
+    parsePspm(file.path(output, 'result'))
 }
 
-parsePspm(file.path(output, 'result'))
+pspm <- meme(output)
+
+
 
 #fa.f <- list.files(gsub("/$", '', out), pattern=paste0(prefix, ".*", n, ".fa"), full.names=TRUE)# {{{
 #maxsize <- max(sapply(fa.f, function(f){
