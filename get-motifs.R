@@ -178,8 +178,10 @@ consensusSequence <- function (pspm){
 }
 
 # Run MEME# {{{
-meme <- function(fasta, output_path) {
+meme <- function(output_path) {
     memeBin <- 'meme'
+    fasta <- list.files(pattern = "*.fa", output_path)
+
     # nmotifs = max number of motifs to find
     # minsites= min number of sites for each motif
     # minw = min width of motif, maxw = max n of motifs
@@ -187,7 +189,7 @@ meme <- function(fasta, output_path) {
     # maxsize = minimum dataset size in characters
     # -evt = stop if motif E-value greater than <evt>
     # possibly don't limit to 3 motifs but filter by E-value
-    
+
     system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.1 -minw 6 -maxw 35 -revcomp',
                memeBin,
                fasta,
@@ -227,9 +229,7 @@ tomtom <- function (pspm, outputPath, databases) {
 
 
 # end of fold sections # }}}
-print('starting')
 loci <- getLocus(args$peaks)
-print(loci)
 seq_motifs(loci, args$npeaks, output_path)
 pspm <- meme(output_path)
 map(tomtom, pspm, output_path)
