@@ -194,7 +194,7 @@ meme <- function(output_path) {
                memeBin,
                fasta,
                output_path,
-               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+               round(as.numeric(system(paste0("wc -c ", fasta, " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
                ))
 
 
