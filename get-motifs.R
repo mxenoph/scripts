@@ -33,7 +33,8 @@ suppressMessages(library(BSgenome))
 suppressMessages(library("BSgenome.Mmusculus.UCSC.mm9"))
 source("~/local/granges.functions.R")
 #Turn warnings back on
-options(warn=0)# }}}
+options(warn=0)
+# }}}
 
 
 # Functions # {{{
@@ -203,8 +204,8 @@ tomtom <- function (pspm, outputPath, databases) {
     motifName <- consensusSequence(pspm)
     inputFile <- file.path(outputPath, paste0(motifName, '.meme'))
     fasta <- list.files(pattern = "*.fa", outputPath)
-    writeLines(memeFileContent(pspm, fasta, inputFile)
-    
+    writeLines(memeFileContent(pspm, fasta), inputFile)
+
     if (missing(databases))
         databases <- file.path(memeDatabasePath,
                                c('JASPAR_CORE_2014_vertebrates.meme',
@@ -226,9 +227,10 @@ tomtom <- function (pspm, outputPath, databases) {
 
 
 # end of fold sections # }}}
-
+print('starting')
 loci <- getLocus(args$peaks)
-seq_motifs(loci, args$npeaks)
+print(loci)
+seq_motifs(loci, args$npeaks, output_path)
 pspm <- meme(output_path)
 map(tomtom, pspm, output_path)
 
