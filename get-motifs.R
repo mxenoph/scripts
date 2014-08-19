@@ -74,6 +74,32 @@ symlist <- function (names)
 }# }}}
 
 
+# Read in peaks and get summits# {{{
+getLocus <- function(file){
+    peaks <- macs2GRanges(file)
+    peaks <- peaks[order(-values(peaks)$score)]
+    peaks <- add.seqlengths(peaks, chr_size)
+
+    #why just looking at + strand?
+    summits <- GRanges(seqnames= seqnames(peaks),
+                       range= IRanges(start= values(peaks)$summit - args$dist,
+                                      end= values(peaks)$summit + args$dist),
+                       strand= "+",
+                       seqlengths= seqlengths(peaks))
+
+    values(summits) <- values(peaks)
+    #trimming ranges that exceed the chromosome length
+    summits <- trim(summits)
+
+    #Because of trimming I might end up with ranges of 0 length so get rid of those
+    summits <- summits[width(summits) != 0]
+
+    summits <- summits[order(-values(summits)$score)]
+    names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=":")
+
+    return(summits)
+} # }}}
+
 # Get sequences for peaks # {{{
 seq_motifs <- function(summits, n){
     seqs <- getSeq(Mmusculus, summits[1:n], as.character=FALSE)
@@ -112,31 +138,27 @@ parsePspm <- function (results) {
         matrix, nsites, evalue)
 }# }}}
 
-# }}}
+# Run MEME# {{{
+meme <- function(output) {
+    memeBin <- 'meme'
+    # nmotifs = max number of motifs to find
+    # minsites= min number of sites for each motif
+    # minw = min width of motif, maxw = max n of motifs
+    # revcomp =  allow sites on + or - strands
+    # maxsize = minimum dataset size in characters
+    # -evt = stop if motif E-value greater than <evt>
+    # possibly don't limit to 3 motifs but filter by E-value
 
-# Read in peaks and get summits# {{{
-peaks <- macs2GRanges(args$peaks)
-peaks <- peaks[order(-values(peaks)$score)]
-peaks <- add.seqlengths(peaks, chr_size)
-
-#why just looking at + strand?
-summits <- GRanges(seqnames= seqnames(peaks),
-                   range= IRanges(start= values(peaks)$summit - args$dist,
-                                  end= values(peaks)$summit + args$dist),
-                   strand= "+",
-                   seqlengths= seqlengths(peaks))
-
-values(summits) <- values(peaks)
-#trimming ranges that exceed the chromosome length
-summits <- trim(summits)
-
-#Because of trimming I might end up with ranges of 0 length so get rid of those
-summits <- summits[width(summits) != 0]
-
-summits <- summits[order(-values(summits)$score)]
-names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=":")# }}}
-
-#seq_motifs(summits, args$npeaks)
+    #system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
+    #               memeBin,
+    #               paste0(output, '.fa'),
+    #               file.path(output, 'result'),
+    #               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+    #               ))
+    #
+    
+    parsePspm(file.path(output, 'result'))
+} # }}}
 
 #n <- 300# {{{
 #print(paste0("Getting sequences for top ", n, " peaks"))
@@ -151,46 +173,8 @@ names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=":"
 ## }}}
 
 
-meme <- function(output) {
-    memeBin <- 'meme'
-    # possibly don't limit to 3 motifs but filter by E
-    #system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
-    #               memeBin,
-    #               paste0(output, '.fa'),
-    #               file.path(output, 'result'),
-    #               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
-    #               ))
-    #
-    
-    parsePspm(file.path(output, 'result'))
-}
-
+seq_motifs(getLocus(args$peaks), args$npeaks)
 pspm <- meme(output)
 
 
 
-#fa.f <- list.files(gsub("/$", '', out), pattern=paste0(prefix, ".*", n, ".fa"), full.names=TRUE)# {{{
-#maxsize <- max(sapply(fa.f, function(f){
-#                  char <- system(paste0("wc -c ", f, " | awk -F' ' '{print $1}'"), intern=TRUE)
-#                  return(round(as.numeric(char), -2))
-#                   }))
-#
-# nmotifs = max number of motifs to find
-# minsites= min number of sites for each motif
-# minw = min width of motif, maxw = max n of motifs
-# revcomp =  allow sites on + or - strands
-# maxsize = minimum dataset size in characters
-# -evt = stop if motif E-value greater than <evt>
-#meme.param <- paste0(" -nmotifs 3 -minsites 100 -minw 6 -maxw 35 -revcomp -dna -maxsize ", maxsize, " -oc ")
-#cluster.param <- 'bsub -M 20000 -R "rusage[mem=10000]"'
-#
-#for (fa in fa.f){
-#   print(paste0("Running meme on ", fa, ". Meme options: ", meme.param))
-#   #removing fa extension
-#   meme.out <- substr(fa, 1, nchar(fa)-3)
-#   meme.command <- paste(cluster.param, " meme ", fa, meme.param, meme.out, sep="")
-#   print(meme.command)
-#   system(meme.command)
-#}
-#
-## }}}
