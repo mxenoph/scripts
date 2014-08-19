@@ -24,7 +24,7 @@ annotationInfo(tolower(args$assembly))
 
 # }}}
 
-# Import some libraries & Turn off warning messages for loading the packages-globally# {{{
+# Import libraries & Turn off warning messages for loading the packages-globally# {{{
 options(warn=-1)
 suppressMessages(library(BSgenome))
 suppressMessages(library("BSgenome.Mmusculus.UCSC.mm9"))
@@ -138,6 +138,41 @@ parsePspm <- function (results) {
         matrix, nsites, evalue)
 }# }}}
 
+# Adapted from Konrad# {{{
+# No need to filter the sequence
+memeFileContent <- function (pspm) {
+    # Format documented at
+    # <http://meme.nbcr.net/meme/doc/meme-format.html#min_format>
+    version <- 'MEME version 4.9\n'
+
+    inputFasta <- readLines(paste0(output, '.fa'))
+
+    # Remove Fasta headers and merge lines
+    inputFasta <- paste(inputFasta[! grepl('^>', inputFasta)], collapse = '')
+    # Normalise casing and remove Ns
+    inputFasta <- gsub('N', '', toupper(inputFasta))
+    freqs <- table(strsplit(inputFasta, ''))
+
+    frequencies <- sprintf('Background letter frequencies:\n%s\n',
+    paste(mapply(paste, names(freqs), freqs), collapse = ' '))
+
+    motif <- capture.output(write.table(pspm$matrix, col.names = FALSE,
+    row.names = FALSE))
+
+    c(version,
+      # Alphabet omitted (can be inferred)
+      # Strand omitted (can be inferred)
+      frequencies,
+      pspmHeader(pspm),
+      motif)
+}# }}}
+
+consensusSequence <- function (pspm){
+    with(pspm, paste(colnames(matrix)[
+                     vapply(as.data.frame(t(matrix)), which.max,
+                            numeric(1))], collapse = ''))
+}
+
 # Run MEME# {{{
 meme <- function(output) {
     memeBin <- 'meme'
@@ -160,6 +195,39 @@ meme <- function(output) {
     parsePspm(file.path(output, 'result'))
 } # }}}
 
+# Run tomtom# {{{
+tomtom <- function (pspm, outputPath, databases) {
+    motifName <- consensusSequence(pspm)
+    inputFile <- file.path(outputPath, motifName, ext = 'meme')
+    writeLines(memeFileContent(pspm, foreground), inputFile)
+    
+    if (missing(databases))
+        databases <- file.path("/nfs/research2/bertone/user/mxenoph/common/meme/motif_databases",
+                               c('JASPAR_CORE_2014_vertebrates.meme',
+                                 'uniprobe_mouse.meme'))
+    
+    outputPath <- file.path(outputPath, 'result', motifName)
+    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
+                   'tomtom',
+                   outputPath,
+                   inputFile,
+                   databases))
+
+    read.table(file.path(outputPath, 'tomtom.txt'), sep = '\t',
+               col.names = c('QueryID', 'TargetID', 'Offset', 'pvalue',
+                             'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
+                             'TargetConsensus', 'Orientation'),
+               stringsAsFactors = FALSE)
+}# }}}
+
+
+# end of fold sections # }}}
+
+loci <- getLocus(args$peaks)
+seq_motifs(loci, args$npeaks)
+pspm <- meme(output)
+map(tomtom, pspm, output, databases)
+
 #n <- 300# {{{
 #print(paste0("Getting sequences for top ", n, " peaks"))
 #writeXStringSet(seqs[names(seqs) %in% names(summits)[1:n]], file= paste(out, prefix, ".top", n, ".fa", sep=""), "fasta", append=FALSE)
@@ -171,10 +239,4 @@ meme <- function(output) {
 #index <- sample(1:length(summits), size=n, replace=FALSE)
 #writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
 ## }}}
-
-
-seq_motifs(getLocus(args$peaks), args$npeaks)
-pspm <- meme(output)
-
-
 
