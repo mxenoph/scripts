@@ -15,12 +15,15 @@ parser$add_argument('-m', '--mode', type= "character", default= 'top',  help= "L
 
 args <- parser$parse_args()
 
-outputPath <- file.path(args$out, 'meme', basename(file_path_sans_ext(args$peaks)))
-output <- file.path(outputPath, paste0(args$mode, args$npeaks))
-dir.create(output, recursive= TRUE)
+parent_path <- file.path(args$out, 'meme', basename(file_path_sans_ext(args$peaks)))
+output_path <- file.path(parent_path, paste0(args$mode, args$npeaks))
+dir.create(output_path, recursive= TRUE)
 
 # function in annotation-functions.R
 annotationInfo(tolower(args$assembly))
+
+# define variables
+memeDatabasePath <- '/nfs/research2/bertone/user/mxenoph/common/meme/motif_databases'
 
 # }}}
 
@@ -73,7 +76,6 @@ symlist <- function (names)
     closure(params, args[[last]], parent.frame())
 }# }}}
 
-
 # Read in peaks and get summits# {{{
 getLocus <- function(file){
     peaks <- macs2GRanges(file)
@@ -101,15 +103,16 @@ getLocus <- function(file){
 } # }}}
 
 # Get sequences for peaks # {{{
-seq_motifs <- function(summits, n){
+seq_motifs <- function(summits, n, output_path){
     seqs <- getSeq(Mmusculus, summits[1:n], as.character=FALSE)
     # make a dataframe holding information on FE, FDR, sequence
     names(seqs) <- paste(names(summits)[1:n],
                             as.vector(values(summits)[['FE']][1:n]),
                             as.vector(values(summits)[['fdr']][1:n]), sep='|')
 
-    writeXStringSet(seqs, file= paste0(output, '.fa'), "fasta", append=FALSE)
-za}# }}}
+    fasta <- file.path(output_path, paste0('top', n, '.fa'))
+    writeXStringSet(seqs, file= fasta, "fasta", append=FALSE)
+}# }}}
 
 # Parse motifs and E-values from MEME output. From Konrad Rudolph  # {{{
 parsePspm <- function (results) {
@@ -140,12 +143,12 @@ parsePspm <- function (results) {
 
 # Adapted from Konrad# {{{
 # No need to filter the sequence
-memeFileContent <- function (pspm) {
+memeFileContent <- function (pspm, fasta) {
     # Format documented at
     # <http://meme.nbcr.net/meme/doc/meme-format.html#min_format>
     version <- 'MEME version 4.9\n'
 
-    inputFasta <- readLines(paste0(output, '.fa'))
+    inputFasta <- readLines(fasta)
 
     # Remove Fasta headers and merge lines
     inputFasta <- paste(inputFasta[! grepl('^>', inputFasta)], collapse = '')
@@ -174,7 +177,7 @@ consensusSequence <- function (pspm){
 }
 
 # Run MEME# {{{
-meme <- function(output) {
+meme <- function(fasta, output_path) {
     memeBin <- 'meme'
     # nmotifs = max number of motifs to find
     # minsites= min number of sites for each motif
@@ -183,26 +186,27 @@ meme <- function(output) {
     # maxsize = minimum dataset size in characters
     # -evt = stop if motif E-value greater than <evt>
     # possibly don't limit to 3 motifs but filter by E-value
-
-    #system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
-    #               memeBin,
-    #               paste0(output, '.fa'),
-    #               file.path(output, 'result'),
-    #               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
-    #               ))
-    #
     
-    parsePspm(file.path(output, 'result'))
+    system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.1 -minw 6 -maxw 35 -revcomp',
+               memeBin,
+               fasta,
+               output_path,
+               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+               ))
+
+
+    parsePspm(output_path)
 } # }}}
 
 # Run tomtom# {{{
 tomtom <- function (pspm, outputPath, databases) {
     motifName <- consensusSequence(pspm)
-    inputFile <- file.path(outputPath, motifName, ext = 'meme')
-    writeLines(memeFileContent(pspm, foreground), inputFile)
+    inputFile <- file.path(outputPath, paste0(motifName, '.meme'))
+    fasta <- list.files(pattern = "*.fa", outputPath)
+    writeLines(memeFileContent(pspm, fasta, inputFile)
     
     if (missing(databases))
-        databases <- file.path("/nfs/research2/bertone/user/mxenoph/common/meme/motif_databases",
+        databases <- file.path(memeDatabasePath,
                                c('JASPAR_CORE_2014_vertebrates.meme',
                                  'uniprobe_mouse.meme'))
     
@@ -225,8 +229,8 @@ tomtom <- function (pspm, outputPath, databases) {
 
 loci <- getLocus(args$peaks)
 seq_motifs(loci, args$npeaks)
-pspm <- meme(output)
-map(tomtom, pspm, output, databases)
+pspm <- meme(output_path)
+map(tomtom, pspm, output_path)
 
 #n <- 300# {{{
 #print(paste0("Getting sequences for top ", n, " peaks"))
@@ -240,3 +244,140 @@ map(tomtom, pspm, output, databases)
 #writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
 ## }}}
 
+#editfunc <- function(a){# {{{
+## Motif scan
+## read the NF-$\kappa$B PWM from a text file
+#NFKB.pwm <- read.table("/nfs/training/PeakCalling/NFKB_pwm_meme.txt",
+#                                              sep="\t", header=FALSE, row.names=1)
+#NFKB.pwm <- t(NFKB.pwm)
+#rownames(NFKB.pwm) <- c("A","C","G","T")
+## view the motif matrix
+#NFKB.pwm
+## plot the motif logo
+#library(seqLogo)
+#seqLogo(NFKB.pwm, ic.scale=TRUE)
+#
+## obtain the sequences under the peaks
+#elementMetadata(macspeaks)$seqs <- getSeq(Hsapiens, macspeaks, as.character=TRUE)
+#
+#
+## function to scan a string for PWM matches at the specified threshold by calling matchPWM()
+## keeps only the closest of multiple hits
+#mymatchPWM <- function (pwm, myseq, threshold, summit) {
+#        # get all matches of PWM
+#        mymatch <- matchPWM(pwm, myseq, min.score=threshold)
+#    # collect starts/seqs into matrix (if any)
+#if (length(mymatch)==0) {
+#        found <- cbind(NA,NA,0)
+#} else {
+#        found <- cbind(start(mymatch), as.character(mymatch), length(start(mymatch)))
+#}
+#colnames(found) <- c("start","seq","nr")
+## keep only the match that is closest to the summit
+#found <- found[order(abs(as.integer(found[,1])-summit),decreasing=FALSE)[1],]
+## return matrix
+#return(found)
+## function to call mymatchPWM() on each peak in a set
+## returns a matrix with motif information per peak
+#ScanPeaks <- function(peak.GR, pwm, threshold) {
+#        # get all peak sequences
+#        myseqs <- elementMetadata(peak.GR)$seqs
+#    # get summit positions (relative to peak coordinates)
+#    summits <- elementMetadata(peak.GR)$maxpos - start(peak.GR)
+#        # apply mymatchPWM() to all peaks in the set
+#        motifmatrix <- sapply(1:length(myseqs), function(x) mymatchPWM(pwm, myseqs[x], threshold, summits[x]))
+#        motifmatrix <- t(motifmatrix)
+#            # set peak IDs as rownames
+#            rownames(motifmatrix) <- names(peak.GR)
+#            # return motif matrix
+#            return(motifmatrix)
+#}
+#
+## scan all peak sequences for the motif (using a cutoff of 80%)
+#### This step is likely to take ~ 10 min, so at this point it's convenient to have a coffee :P ###
+#macs.motifs <- ScanPeaks(macspeaks, as.matrix(NFKB.pwm), "80%")
+#useq.motifs <- ScanPeaks(useqpeaks, as.matrix(NFKB.pwm), "80%")
+#chipseq.motifs <- ScanPeaks(chippeaks, as.matrix(NFKB.pwm), "80%")
+## add motif information (number of motifs per peaks) to the peak GRanges object
+#elementMetadata(macspeaks)$motif.no <- as.integer(macs.motifs[,3])
+#elementMetadata(useqpeaks)$motif.no <- as.integer(useq.motifs[,3])
+#elementMetadata(chippeaks)$motif.no <- as.integer(chipseq.motifs[,3])
+## plot the proportion of peaks with 0, 1 or more motifs in the three peak sets
+#par(mfrow=c(1,3))
+#pie( c(sum(as.numeric(elementMetadata(macspeaks)$motif.no==0)),
+#              sum(as.numeric(elementMetadata(macspeaks)$motif.no==1)),
+#                     sum(as.numeric(elementMetadata(macspeaks)$motif.no>1))),
+#         labels=c("0","1","2+"), main=list("MACS v2",cex=1.5),
+#              col=c("white","lightgrey","darkgrey")
+#         )
+#pie( c(sum(as.numeric(elementMetadata(useqpeaks)$motif.no==0)),
+#              sum(as.numeric(elementMetadata(useqpeaks)$motif.no==1)),
+#                     sum(as.numeric(elementMetadata(useqpeaks)$motif.no>1))),
+#         labels=c("0","1","2+"), main=list("USeq",cex=1.5),
+#              col=c("white","lightgrey","darkgrey")
+#         )
+#pie( c(sum(as.numeric(elementMetadata(chippeaks)$motif.no==0)),
+#         sum(as.numeric(elementMetadata(chippeaks)$motif.no==1)),
+#           sum(as.numeric(elementMetadata(chippeaks)$motif.no>1))),
+#    labels=c("0","1","2+"), main=list("chipseq",cex=1.5),
+#    col=c("white","lightgrey","darkgrey")
+#    )
+#
+#
+## Motif localisation
+## set window size
+#mydist <- 200
+## function to determine the motif profile around peak summits
+#getProfile <- function(peaks.GR, pwm, window.size){
+#    # get regions around summit
+#    summits.GR <- GRanges(
+#                                  seqnames=seqnames(peaks.GR),
+#                                          range=IRanges( start=elementMetadata(peaks.GR)$maxpos - window.size,
+#                                                                        end=elementMetadata(peaks.GR)$maxpos + window.size),
+#                          strand="+"
+#                          )
+#    # create unique names for all peaks
+#    names(summits.GR) <- paste( seqnames(summits.GR), start(summits.GR), end(summits.GR), sep=":")
+#    # get sequence
+#    elementMetadata(summits.GR)$seqs <- getSeq(Hsapiens, summits.GR, as.character=TRUE)
+#    # scan sequences with the PWM
+#    summit.motifs <- ScanPeaks(summits.GR, pwm, "80%")
+#    summit.motifs <- summit.motifs[!is.na(summit.motifs[,1]),]
+#    # get all covered positions
+#    motif.pos <- sapply(as.integer(summit.motifs[,1]), function(x) seq(x, x+ncol(pwm)-1))
+#    motif.pos <- table(unlist(motif.pos))
+#    # convert to data.frame
+#    motif.pos <- data.frame(motif.pos)
+#    names(motif.pos) <- c("position","frequency")
+#    # shift positions relative to summit
+#    motif.pos$position <- as.integer(as.character(motif.pos$position)) - window.size
+#    # ensure all positions are present in the output
+#    profile <- data.frame(
+#                                  position=-window.size:window.size,
+#                                          frequency=motif.pos$frequency[match(-window.size:window.size, motif.pos$position)]
+#                                  )
+#    profile[is.na(profile)] <- 0
+#    return(profile)
+#    # get the profiles for the three different peak sets
+#    macs.profile <- getProfile(macspeaks, as.matrix(NFKB.pwm), mydist)
+#    useq.profile <- getProfile(useqpeaks, as.matrix(NFKB.pwm), mydist)
+#    chipseq.profile <- getProfile(chippeaks, as.matrix(NFKB.pwm), mydist)
+#    # generate plots
+#    pl1 <- xyplot(frequency~position, data=macs.profile,
+#                          type="l", main="motifs around MACS v2 peak summits",
+#                                  aspect=0.8
+#                          )
+#    pl2 <- xyplot(frequency~position, data=useq.profile,
+#                          type="l", main="motifs around USeq peak summits",
+#                                  aspect=0.8
+#                          )
+#    pl3 <- xyplot(frequency~position, data=chipseq.profile,,
+#                          type="l", main="motifs around chipseq peak summits",
+#                                  aspect=0.8
+#                          )
+#    # print plots
+#    print(pl1, split=c(1,1,1,3), more=TRUE)
+#    print(pl2, split=c(1,2,1,3), more=TRUE)
+#    print(pl3, split=c(1,3,1,3))
+#
+## }}}
