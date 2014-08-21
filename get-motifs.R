@@ -36,7 +36,6 @@ source("~/local/granges.functions.R")
 options(warn=0)
 # }}}
 
-
 # Functions # {{{
 
 # Functions by konrad Rudolph# {{{
@@ -253,21 +252,38 @@ tomtom <- function (pspm, outputPath, databases) {
 
 
 # end of fold sections # }}}
+
 #loci <- getLocus(args$peaks)
 #seq_motifs(loci, args$npeaks, output_path)
 pspm <- meme(output_path)
 map(tomtom, pspm, output_path)
 
-#n <- 300# {{{
-#print(paste0("Getting sequences for top ", n, " peaks"))
-#writeXStringSet(seqs[names(seqs) %in% names(summits)[1:n]], file= paste(out, prefix, ".top", n, ".fa", sep=""), "fasta", append=FALSE)
+
+# Get sequences for peaks # {{{
+seq_general <- function(region){
+    seqs <- getSeq(Mmusculus, region, as.character=FALSE)
+    # make a dataframe holding information on FE, FDR, sequence
+    names(seqs) <- names(regions)
+
+#    fasta <- file.path(output_path, paste0('top', n, '.fa'))
+#    writeXStringSet(seqs, file= fasta, "fasta", append=FALSE)
+    return(seqs)
+}# }}}
+
+peaks <- macs2GRanges(args$peaks)
+peaks <- add.seqlengths(peaks, chr_size)
+peaks <- peaks[order(-values(peaks)$score)]
+names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
+
+
+# TODO: seq_motifs on random and bottom peaks {{{
+# should be a new separate function
+# print(paste0("Getting sequences for bottom ", n, " peaks"))
+# writeXStringSet(seqs[names(seqs) %in% names(summits)[length(summits)-(n-1):length(summits)]], file= paste(out, prefix, ".bottom", n, ".fa", sep=""), "fasta", append=FALSE)
 #
-#print(paste0("Getting sequences for bottom ", n, " peaks"))
-#writeXStringSet(seqs[names(seqs) %in% names(summits)[length(summits)-(n-1):length(summits)]], file= paste(out, prefix, ".bottom", n, ".fa", sep=""), "fasta", append=FALSE)
-#
-#print(paste0("Getting sequences for random ", n, " peaks"))
-#index <- sample(1:length(summits), size=n, replace=FALSE)
-#writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
+# print(paste0("Getting sequences for random ", n, " peaks"))
+# index <- sample(1:length(summits), size=n, replace=FALSE)
+# writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
 ## }}}
 
 #editfunc <- function(a){# {{{
