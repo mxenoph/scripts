@@ -30,7 +30,8 @@ memeDatabasePath <- '/nfs/research2/bertone/user/mxenoph/common/meme/motif_datab
 # Import libraries & Turn off warning messages for loading the packages-globally# {{{
 options(warn=-1)
 suppressMessages(library(BSgenome))
-suppressMessages(library("BSgenome.Mmusculus.UCSC.mm9"))
+# Load BSgenome based on assembly
+suppressMessages(library(paste0("BSgenome.Mmusculus.UCSC.", args$assembly), character.only=TRUE))
 source("~/local/granges.functions.R")
 #Turn warnings back on
 options(warn=0)
@@ -270,11 +271,60 @@ seq_general <- function(region){
     return(seqs)
 }# }}}
 
+# Parse motifs and E-values from MEME output. From Konrad Rudolph  # {{{
+parsePspmDb <- function (databasePath) {
+    # from Konrad what the hell is the output?
+    # Parse output raw text file and retrieve PSSMs for all motifs.
+    # Note: we could also parse the XML file using XPath but the XML output file
+    # is quite frankly not very nice. Parsing the raw text is easier. Fail.
+    extractHeader <- function (name, header)
+        let(match = regexpr(sprintf('(?<=%s= )\\S+', name), header, perl = TRUE),
+            as.numeric(regmatches(header, match)))
+    extractName <- function (header)
+        gsub('MOTIF ', '', let(match = regexpr('^MOTIF \\S+', header, perl = TRUE),
+                              as.character(regmatches(header, match))))
+
+    lines <- readLines(databasePath)
+    start <- grep('^MOTIF \\S+', lines) + 2
+    name <- extractName(lines[start-2])
+    length <- extractHeader('w', lines[start])
+    nsites <- extractHeader('nsites', lines[start])
+    evalue <- extractHeader('E', lines[start])
+    matrix <- map(.(start, end = read.table(text = paste(lines[start : end],
+                                                         collapse = '\n'),
+                                            col.names = c('A', 'C', 'G', 'T'))),
+                  start + 1, start + length)
+
+    map(.(name, matrix, nsites, evalue =
+          let(str = list(name = name, matrix = matrix, nsites = nsites, e = evalue),
+              structure(str, class = 'pspm'))),
+        name, matrix, nsites, evalue)
+}# }}}
+
+# Scan a string/sequence for PWM matches
+extractPspmMatches <- function(pspm, sequence, threshold, summit){
+    # Get all matches for pspm
+    # needs a numeric matrix with rows A,C,T,G, the minimum score for counting a match
+    # that could be a percentage of the highest possible score or a number
+    match <- matchPWM(pspm, sequence, min.score = threshold)
+    if (length(match) == 0)
+        found <- cbind(NA, NA, 0)
+    else
+        found <- cbind(start(match),
+                       as.character(match),
+                       length(start(match)))
+    colnames(found) <- c('start', 'seq', 'hits')
+
+    # Keep only the match that is closest to the summit, why using abs() ?
+    found <- found[order(abs(as.integer(found[,'start']) - summit), decreasing = FALSE)[1], ]
+    return(found)
+}
+
 peaks <- macs2GRanges(args$peaks)
 peaks <- add.seqlengths(peaks, chr_size)
 peaks <- peaks[order(-values(peaks)$score)]
 names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
-
+elementMetadata(peaks)$seqs <- seq_general(peaks)
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
@@ -295,30 +345,8 @@ names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
 #rownames(NFKB.pwm) <- c("A","C","G","T")
 ## view the motif matrix
 #NFKB.pwm
-## plot the motif logo
-#library(seqLogo)
-#seqLogo(NFKB.pwm, ic.scale=TRUE)
 #
-## obtain the sequences under the peaks
-#elementMetadata(macspeaks)$seqs <- getSeq(Hsapiens, macspeaks, as.character=TRUE)
-#
-#
-## function to scan a string for PWM matches at the specified threshold by calling matchPWM()
-## keeps only the closest of multiple hits
-#mymatchPWM <- function (pwm, myseq, threshold, summit) {
-#        # get all matches of PWM
-#        mymatch <- matchPWM(pwm, myseq, min.score=threshold)
-#    # collect starts/seqs into matrix (if any)
-#if (length(mymatch)==0) {
-#        found <- cbind(NA,NA,0)
-#} else {
-#        found <- cbind(start(mymatch), as.character(mymatch), length(start(mymatch)))
-#}
-#colnames(found) <- c("start","seq","nr")
-## keep only the match that is closest to the summit
-#found <- found[order(abs(as.integer(found[,1])-summit),decreasing=FALSE)[1],]
-## return matrix
-#return(found)
+
 ## function to call mymatchPWM() on each peak in a set
 ## returns a matrix with motif information per peak
 #ScanPeaks <- function(peak.GR, pwm, threshold) {
