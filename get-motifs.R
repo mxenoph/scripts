@@ -261,8 +261,8 @@ map(tomtom, pspm, output_path)
 
 
 # Get sequences for peaks # {{{
-seq_general <- function(region){
-    seqs <- getSeq(Mmusculus, region, as.character=FALSE)
+seq_general <- function(regions){
+    seqs <- getSeq(Mmusculus, regions, as.character=TRUE)
     # make a dataframe holding information on FE, FDR, sequence
     names(seqs) <- names(regions)
 
@@ -271,7 +271,7 @@ seq_general <- function(region){
     return(seqs)
 }# }}}
 
-# Parse motifs and E-values from MEME output. From Konrad Rudolph  # {{{
+# Parse motifs and E-values from MEME formatted databases. Adapted from Konrad Rudolph  # {{{
 parsePspmDb <- function (databasePath) {
     # from Konrad what the hell is the output?
     # Parse output raw text file and retrieve PSSMs for all motifs.
@@ -303,7 +303,7 @@ parsePspmDb <- function (databasePath) {
     return(pspm)
 }# }}}
 
-# Scan a string/sequence for PWM matches
+# Scan a string/sequence for PWM matches# {{{
 extractPspmMatches <- function(pspm, sequence, threshold, summit){
     # Get all matches for pspm
     # needs a numeric matrix with rows A,C,T,G, the minimum score for counting a match
@@ -320,13 +320,38 @@ extractPspmMatches <- function(pspm, sequence, threshold, summit){
     # Keep only the match that is closest to the summit, why using abs() ?
     found <- found[order(abs(as.integer(found[,'start']) - summit), decreasing = FALSE)[1], ]
     return(found)
-}
+}# }}}
+
+# Scan peaks for a motif # {{{
+scanPeaks <- function(peaks, pspm, threshold){
+    # Get sequences for all peaks
+    sequences <- elementMetadata(peaks)$seqs
+    motifs <- sapply(1:length(sequences),
+                     function(indx) 
+                         extractPspmMatches(pspm, sequences[indx], threshold, elementMetadata(peaks)$summit[indx]))
+    motifs <- t(motifs)
+    rownames(motifs) <- names(peaks)
+    return(motifs)
+}# }}}
 
 peaks <- macs2GRanges(args$peaks)
 peaks <- add.seqlengths(peaks, chr_size)
 peaks <- peaks[order(-values(peaks)$score)]
 names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
 elementMetadata(peaks)$seqs <- seq_general(peaks)
+
+# pspm has to be t() because we need the rows to A,C,T,G
+scanned <- scanPeaks(peaks, t(ps), "80%")
+elementMetadata(peaks)$motif_hits <- as.integer(scanned[, 'hits'])
+
+pdf('pie-chart.pdf')
+pie( c(sum(as.numeric(elementMetadata(peaks)$motif_hits==0)),
+              sum(as.numeric(elementMetadata(peaks)$motif_hits==1)),
+                     sum(as.numeric(elementMetadata(peaks)$motif_hits>1))),
+         labels=c("0","1","2+"), main=list("MACS v2", cex=1.5),
+              col=c("white","lightgrey","darkgrey")
+         )
+dev.off()
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
@@ -339,32 +364,6 @@ elementMetadata(peaks)$seqs <- seq_general(peaks)
 ## }}}
 
 #editfunc <- function(a){# {{{
-## Motif scan
-## read the NF-$\kappa$B PWM from a text file
-#NFKB.pwm <- read.table("/nfs/training/PeakCalling/NFKB_pwm_meme.txt",
-#                                              sep="\t", header=FALSE, row.names=1)
-#NFKB.pwm <- t(NFKB.pwm)
-#rownames(NFKB.pwm) <- c("A","C","G","T")
-## view the motif matrix
-#NFKB.pwm
-#
-
-## function to call mymatchPWM() on each peak in a set
-## returns a matrix with motif information per peak
-#ScanPeaks <- function(peak.GR, pwm, threshold) {
-#        # get all peak sequences
-#        myseqs <- elementMetadata(peak.GR)$seqs
-#    # get summit positions (relative to peak coordinates)
-#    summits <- elementMetadata(peak.GR)$maxpos - start(peak.GR)
-#        # apply mymatchPWM() to all peaks in the set
-#        motifmatrix <- sapply(1:length(myseqs), function(x) mymatchPWM(pwm, myseqs[x], threshold, summits[x]))
-#        motifmatrix <- t(motifmatrix)
-#            # set peak IDs as rownames
-#            rownames(motifmatrix) <- names(peak.GR)
-#            # return motif matrix
-#            return(motifmatrix)
-#}
-#
 ## scan all peak sequences for the motif (using a cutoff of 80%)
 #### This step is likely to take ~ 10 min, so at this point it's convenient to have a coffee :P ###
 #macs.motifs <- ScanPeaks(macspeaks, as.matrix(NFKB.pwm), "80%")
@@ -376,12 +375,6 @@ elementMetadata(peaks)$seqs <- seq_general(peaks)
 #elementMetadata(chippeaks)$motif.no <- as.integer(chipseq.motifs[,3])
 ## plot the proportion of peaks with 0, 1 or more motifs in the three peak sets
 #par(mfrow=c(1,3))
-#pie( c(sum(as.numeric(elementMetadata(macspeaks)$motif.no==0)),
-#              sum(as.numeric(elementMetadata(macspeaks)$motif.no==1)),
-#                     sum(as.numeric(elementMetadata(macspeaks)$motif.no>1))),
-#         labels=c("0","1","2+"), main=list("MACS v2",cex=1.5),
-#              col=c("white","lightgrey","darkgrey")
-#         )
 #pie( c(sum(as.numeric(elementMetadata(useqpeaks)$motif.no==0)),
 #              sum(as.numeric(elementMetadata(useqpeaks)$motif.no==1)),
 #                     sum(as.numeric(elementMetadata(useqpeaks)$motif.no>1))),
