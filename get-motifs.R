@@ -227,7 +227,7 @@ tomtom <- function (pspm, outputPath, databases) {
     extractMotifId <- function (header){
         match <- regexpr(sprintf('\\t(\\S+)\\t'), header, perl = TRUE)
         id <- gsub('\t', '', regmatches(header, match))
-        name <- system(sprintf('grep %s %s | tr -d \'\n\' | cut -d \' \' -f 3',
+        name <- system(sprintf('grep %s %s | cut -d \' \' -f 3 | tr -d \'\n\'',
                                id,
                                file.path(memeDatabasePath, c('JASPAR_CORE_2014_vertebrates.meme',
                                                              'uniprobe_mouse.meme'))
@@ -237,14 +237,15 @@ tomtom <- function (pspm, outputPath, databases) {
    lines <- readLines(file.path(outputPath, motifName, 'tomtom.txt'), n= -1L)
    lines <- lines[2:length(lines)]
    factors <- as.vector(unlist(map(extractMotifId, lines)))
-   combined <- as.vector(unlist(function(x, y)
-                                paste(x, y, sep = '\t'),
-                                lines, factors))
-   
-   write.table(file.path(outputPath, motifName, 'tomtom.txt'), combined,
-               col.names = c('QueryID', 'TargetID', 'Offset', 'pvalue',
-                             'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
-                             'TargetConsensus', 'Orientation', 'Factor'),
+   combined <- as.vector(unlist(map(function(x, y)
+                                    paste(x, y, sep = '\t'),
+                                    lines, factors)))
+
+   write.table(file = file.path(outputPath, motifName, 'tomtom.txt'), combined,
+               col.names = paste(c('QueryID', 'TargetID', 'Offset', 'pvalue',
+                                   'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
+                                   'TargetConsensus', 'Orientation', 'Factor'),
+                                 collapse = '\t'),
                row.names = FALSE,
                quote = FALSE)
    print('tomtom function')
