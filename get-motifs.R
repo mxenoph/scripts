@@ -198,12 +198,12 @@ meme <- function(output) {
     #system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
     #               memeBin,
     #               paste0(output, '.fa'),
-    #               file.path(output, 'result'),
+    #               file.path(output),
     #               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
     #               ))
     #
 
-    parsePspm(file.path(output, 'result'))
+    parsePspm(file.path(output))
 } # }}}
 
 # Run tomtom# {{{
