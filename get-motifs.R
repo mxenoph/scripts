@@ -184,6 +184,28 @@ pspmHeader <- function (pspm){# {{{
           sep = '\n\n')
 }# }}}
 
+# Run MEME# {{{
+meme <- function(output) {
+        memeBin <- 'meme'
+    # nmotifs = max number of motifs to find
+    # minsites= min number of sites for each motif
+    # minw = min width of motif, maxw = max n of motifs
+    # revcomp =  allow sites on + or - strands
+    # maxsize = minimum dataset size in characters
+    # -evt = stop if motif E-value greater than <evt>
+    # possibly don't limit to 3 motifs but filter by E-value
+
+    #system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
+    #               memeBin,
+    #               paste0(output, '.fa'),
+    #               file.path(output, 'result'),
+    #               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+    #               ))
+    #
+
+    parsePspm(file.path(output, 'result'))
+} # }}}
+
 # Run tomtom# {{{
 tomtom <- function (pspm, outputPath, databases) {
     motifName <- consensusSequence(pspm)
@@ -223,8 +245,9 @@ tomtom <- function (pspm, outputPath, databases) {
                col.names = c('QueryID', 'TargetID', 'Offset', 'pvalue',
                              'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
                              'TargetConsensus', 'Orientation', 'Factor'),
-               row.names = F,
+               row.names = FALSE,
                quote = FALSE)
+   print('tomtom function')
 }# }}}
 
 
