@@ -171,41 +171,24 @@ memeFileContent <- function (pspm, fasta) {
       motif)
 }# }}}
 
-consensusSequence <- function (pspm){
+consensusSequence <- function (pspm){# {{{
     with(pspm, paste(colnames(matrix)[
                      vapply(as.data.frame(t(matrix)), which.max,
                             numeric(1))], collapse = ''))
-}
+}# }}}
 
-# Run MEME# {{{
-meme <- function(output_path) {
-    memeBin <- 'meme'
-    fasta <- list.files(pattern = "*.fa", output_path)
-
-    # nmotifs = max number of motifs to find
-    # minsites= min number of sites for each motif
-    # minw = min width of motif, maxw = max n of motifs
-    # revcomp =  allow sites on + or - strands
-    # maxsize = minimum dataset size in characters
-    # -evt = stop if motif E-value greater than <evt>
-    # possibly don't limit to 3 motifs but filter by E-value
-
-    system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.1 -minw 6 -maxw 35 -revcomp',
-               memeBin,
-               fasta,
-               output_path,
-               round(as.numeric(system(paste0("wc -c ", fasta, " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
-               ))
-
-
-    parsePspm(output_path)
-} # }}}
+pspmHeader <- function (pspm){# {{{
+    paste(sprintf('MOTIF %s', consensusSequence(pspm)),
+          sprintf('letter-probability matrix: alenght= %s w= %s nsites= %s E= %e',
+                  ncol(pspm$matrix), nrow(pspm$matrix), pspm$nsites, pspm$e),
+          sep = '\n\n')
+}# }}}
 
 # Run tomtom# {{{
 tomtom <- function (pspm, outputPath, databases) {
     motifName <- consensusSequence(pspm)
     inputFile <- file.path(outputPath, paste0(motifName, '.meme'))
-    fasta <- list.files(pattern = "*.fa", outputPath)
+    fasta <- list.files(pattern = "*.fa", output_path, full.names = TRUE)
     writeLines(memeFileContent(pspm, fasta), inputFile)
 
     if (missing(databases))
@@ -213,24 +196,41 @@ tomtom <- function (pspm, outputPath, databases) {
                                c('JASPAR_CORE_2014_vertebrates.meme',
                                  'uniprobe_mouse.meme'))
     
-    outputPath <- file.path(outputPath, 'result', motifName)
     system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
                    'tomtom',
-                   outputPath,
+                   file.path(outputPath, motifName),
                    inputFile,
                    databases))
 
-    read.table(file.path(outputPath, 'tomtom.txt'), sep = '\t',
+    extractMotifId <- function (header){
+        match <- regexpr(sprintf('\\t(\\S+)\\t'), header, perl = TRUE)
+        id <- gsub('\t', '', regmatches(header, match))
+        name <- system(sprintf('grep %s %s | tr -d \'\n\' | cut -d \' \' -f 3',
+                               id,
+                               file.path(memeDatabasePath, c('JASPAR_CORE_2014_vertebrates.meme',
+                                                             'uniprobe_mouse.meme'))
+                               ), intern = TRUE)
+        return(name)
+    }
+   lines <- readLines(file.path(outputPath, motifName, 'tomtom.txt'), n= -1L)
+   lines <- lines[2:length(lines)]
+   factors <- as.vector(unlist(map(extractMotifId, lines)))
+   combined <- as.vector(unlist(function(x, y)
+                                paste(x, y, sep = '\t'),
+                                lines, factors))
+   
+   write.table(file.path(outputPath, motifName, 'tomtom.txt'), combined,
                col.names = c('QueryID', 'TargetID', 'Offset', 'pvalue',
                              'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
-                             'TargetConsensus', 'Orientation'),
-               stringsAsFactors = FALSE)
+                             'TargetConsensus', 'Orientation', 'Factor'),
+               row.names = F,
+               quote = FALSE)
 }# }}}
 
 
 # end of fold sections # }}}
-loci <- getLocus(args$peaks)
-seq_motifs(loci, args$npeaks, output_path)
+#loci <- getLocus(args$peaks)
+#seq_motifs(loci, args$npeaks, output_path)
 pspm <- meme(output_path)
 map(tomtom, pspm, output_path)
 
