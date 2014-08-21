@@ -295,10 +295,12 @@ parsePspmDb <- function (databasePath) {
                                             col.names = c('A', 'C', 'G', 'T'))),
                   start + 1, start + length)
 
-    map(.(name, matrix, nsites, evalue =
-          let(str = list(name = name, matrix = matrix, nsites = nsites, e = evalue),
-              structure(str, class = 'pspm'))),
-        name, matrix, nsites, evalue)
+    pspm <- map(.(matrix, nsites, evalue =
+                  let(str = list(name = name, matrix = matrix, nsites = nsites, e = evalue),
+                      structure(str, class = 'pspm'))),
+                matrix, nsites, evalue)
+    names(pspm) <- name
+    return(pspm)
 }# }}}
 
 # Scan a string/sequence for PWM matches
