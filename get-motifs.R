@@ -17,7 +17,8 @@ args <- parser$parse_args()
 
 parent_path <- file.path(args$out, 'meme', basename(file_path_sans_ext(args$peaks)))
 output_path <- file.path(parent_path, paste0(args$mode, args$npeaks))
-dir.create(output_path, recursive= TRUE)
+plot_path <- file.path(output_path, 'plots')
+dir.create(plot_path, recursive= TRUE)
 
 # function in annotation-functions.R
 annotationInfo(tolower(args$assembly))
@@ -317,7 +318,7 @@ extractPspmMatches <- function(pspm, sequence, threshold, summit){
                        length(start(match)))
     colnames(found) <- c('start', 'seq', 'hits')
 
-    # Keep only the match that is closest to the summit, why using abs() ?
+    # Keep only the match that is closest to the summit, that's why we use abs()
     found <- found[order(abs(as.integer(found[,'start']) - summit), decreasing = FALSE)[1], ]
     return(found)
 }# }}}
@@ -327,11 +328,37 @@ scanPeaks <- function(peaks, pspm, threshold){
     # Get sequences for all peaks
     sequences <- elementMetadata(peaks)$seqs
     motifs <- sapply(1:length(sequences),
-                     function(indx) 
+                     function(indx)
                          extractPspmMatches(pspm, sequences[indx], threshold, elementMetadata(peaks)$summit[indx]))
     motifs <- t(motifs)
     rownames(motifs) <- names(peaks)
     return(motifs)
+}# }}}
+
+# Get the motif profile around the peak summits# {{{
+getPeakProfile <- function(peaks, pspm, window){
+    summits <- GRanges(seqnames = seqnames(peaks),
+                       range = IRanges(start = elementMetadata(peaks)[['summit']] - window,
+                                       end = elementMetadata(peaks)[['summit']]),
+                       strand = '+', 
+                       summit = elementMetadata(peaks)[['summit']])
+    names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=':')
+
+    elementMetadata(summits)$seqs <- seq_general(summits)
+    scanned <- scanPeaks(summits, pspm, "80%")
+    # Keep only those ranges for which a motif was matched
+    scanned <- scanned[!is.na(scanned[,'start']), ]
+    # Get position covered by the motif
+    positions <- sapply(as.integer(scanned[,'start']), function(x) x + ncol(pspm)-1)
+    positions <- data.frame(table(unlist(positions)))
+    names(positions) <- c('position','frequency')
+    # shift position relative to summit
+    positions$position <- as.integer(as.character(positions$position)) - window
+    # ensure all positions are present in the output
+    profile <- data.frame('position' = c(-window:window),
+                          'frequency' = positions$frequency[match(-window:window, positions$position)])
+    profile[is.na(profile)] <- 0
+    return(profile)
 }# }}}
 
 peaks <- macs2GRanges(args$peaks)
@@ -344,14 +371,24 @@ elementMetadata(peaks)$seqs <- seq_general(peaks)
 scanned <- scanPeaks(peaks, t(ps), "80%")
 elementMetadata(peaks)$motif_hits <- as.integer(scanned[, 'hits'])
 
-pdf('pie-chart.pdf')
-pie( c(sum(as.numeric(elementMetadata(peaks)$motif_hits==0)),
-              sum(as.numeric(elementMetadata(peaks)$motif_hits==1)),
-                     sum(as.numeric(elementMetadata(peaks)$motif_hits>1))),
-         labels=c("0","1","2+"), main=list("MACS v2", cex=1.5),
-              col=c("white","lightgrey","darkgrey")
-         )
+profile <- getPeakProfile(peaks, t(ps), 200)
+
+pdf(file.path(plot_path, 'motifs-summary.pdf'))
+p <- ggplot(as.data.frame(elementMetadata(peaks)), aes(motif_hits))
+p <- p + geom_bar(stat = "bin")
+# removes the extra base line added by ggplot at y=0
+# TODO: find a better solution to get rid of it
+p <- p + geom_hline(yintercept=0, colour="white", size=0.5)
+p
+
+p <- ggplot(profile, aes(x=position, y=frequency)) 
+p <- p + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
+                        alpha = frequency))
+p <- p + guides(colour = FALSE)
+p
 dev.off()
+
+
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
@@ -363,86 +400,3 @@ dev.off()
 # writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
 ## }}}
 
-#editfunc <- function(a){# {{{
-## scan all peak sequences for the motif (using a cutoff of 80%)
-#### This step is likely to take ~ 10 min, so at this point it's convenient to have a coffee :P ###
-#macs.motifs <- ScanPeaks(macspeaks, as.matrix(NFKB.pwm), "80%")
-#useq.motifs <- ScanPeaks(useqpeaks, as.matrix(NFKB.pwm), "80%")
-#chipseq.motifs <- ScanPeaks(chippeaks, as.matrix(NFKB.pwm), "80%")
-## add motif information (number of motifs per peaks) to the peak GRanges object
-#elementMetadata(macspeaks)$motif.no <- as.integer(macs.motifs[,3])
-#elementMetadata(useqpeaks)$motif.no <- as.integer(useq.motifs[,3])
-#elementMetadata(chippeaks)$motif.no <- as.integer(chipseq.motifs[,3])
-## plot the proportion of peaks with 0, 1 or more motifs in the three peak sets
-#par(mfrow=c(1,3))
-#pie( c(sum(as.numeric(elementMetadata(useqpeaks)$motif.no==0)),
-#              sum(as.numeric(elementMetadata(useqpeaks)$motif.no==1)),
-#                     sum(as.numeric(elementMetadata(useqpeaks)$motif.no>1))),
-#         labels=c("0","1","2+"), main=list("USeq",cex=1.5),
-#              col=c("white","lightgrey","darkgrey")
-#         )
-#pie( c(sum(as.numeric(elementMetadata(chippeaks)$motif.no==0)),
-#         sum(as.numeric(elementMetadata(chippeaks)$motif.no==1)),
-#           sum(as.numeric(elementMetadata(chippeaks)$motif.no>1))),
-#    labels=c("0","1","2+"), main=list("chipseq",cex=1.5),
-#    col=c("white","lightgrey","darkgrey")
-#    )
-#
-#
-## Motif localisation
-## set window size
-#mydist <- 200
-## function to determine the motif profile around peak summits
-#getProfile <- function(peaks.GR, pwm, window.size){
-#    # get regions around summit
-#    summits.GR <- GRanges(
-#                                  seqnames=seqnames(peaks.GR),
-#                                          range=IRanges( start=elementMetadata(peaks.GR)$maxpos - window.size,
-#                                                                        end=elementMetadata(peaks.GR)$maxpos + window.size),
-#                          strand="+"
-#                          )
-#    # create unique names for all peaks
-#    names(summits.GR) <- paste( seqnames(summits.GR), start(summits.GR), end(summits.GR), sep=":")
-#    # get sequence
-#    elementMetadata(summits.GR)$seqs <- getSeq(Hsapiens, summits.GR, as.character=TRUE)
-#    # scan sequences with the PWM
-#    summit.motifs <- ScanPeaks(summits.GR, pwm, "80%")
-#    summit.motifs <- summit.motifs[!is.na(summit.motifs[,1]),]
-#    # get all covered positions
-#    motif.pos <- sapply(as.integer(summit.motifs[,1]), function(x) seq(x, x+ncol(pwm)-1))
-#    motif.pos <- table(unlist(motif.pos))
-#    # convert to data.frame
-#    motif.pos <- data.frame(motif.pos)
-#    names(motif.pos) <- c("position","frequency")
-#    # shift positions relative to summit
-#    motif.pos$position <- as.integer(as.character(motif.pos$position)) - window.size
-#    # ensure all positions are present in the output
-#    profile <- data.frame(
-#                                  position=-window.size:window.size,
-#                                          frequency=motif.pos$frequency[match(-window.size:window.size, motif.pos$position)]
-#                                  )
-#    profile[is.na(profile)] <- 0
-#    return(profile)
-#    # get the profiles for the three different peak sets
-#    macs.profile <- getProfile(macspeaks, as.matrix(NFKB.pwm), mydist)
-#    useq.profile <- getProfile(useqpeaks, as.matrix(NFKB.pwm), mydist)
-#    chipseq.profile <- getProfile(chippeaks, as.matrix(NFKB.pwm), mydist)
-#    # generate plots
-#    pl1 <- xyplot(frequency~position, data=macs.profile,
-#                          type="l", main="motifs around MACS v2 peak summits",
-#                                  aspect=0.8
-#                          )
-#    pl2 <- xyplot(frequency~position, data=useq.profile,
-#                          type="l", main="motifs around USeq peak summits",
-#                                  aspect=0.8
-#                          )
-#    pl3 <- xyplot(frequency~position, data=chipseq.profile,,
-#                          type="l", main="motifs around chipseq peak summits",
-#                                  aspect=0.8
-#                          )
-#    # print plots
-#    print(pl1, split=c(1,1,1,3), more=TRUE)
-#    print(pl2, split=c(1,2,1,3), more=TRUE)
-#    print(pl3, split=c(1,3,1,3))
-#
-## }}}
