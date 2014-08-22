@@ -209,8 +209,8 @@ meme <- function(output) {
 
 # Run tomtom# {{{
 tomtom <- function (pspm, outputPath, databases) {
-    motifName <- consensusSequence(pspm)
-    inputFile <- file.path(outputPath, paste0(motifName, '.meme'))
+    motif <- consensusSequence(pspm)
+    inputFile <- file.path(outputPath, paste0(motif, '.meme'))
     fasta <- list.files(pattern = "*.fa", output_path, full.names = TRUE)
     writeLines(memeFileContent(pspm, fasta), inputFile)
 
@@ -219,13 +219,13 @@ tomtom <- function (pspm, outputPath, databases) {
                                c('JASPAR_CORE_2014_vertebrates.meme',
                                  'uniprobe_mouse.meme'))
     
-    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
-                   'tomtom',
-                   file.path(outputPath, motifName),
-                   inputFile,
-                   databases))
+#    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
+#                   'tomtom',
+#                   file.path(outputPath, motif),
+#                   inputFile,
+#                   databases))
 
-    extractMotifId <- function (header){
+    extractMotifName <- function (header){
         match <- regexpr(sprintf('\\t(\\S+)\\t'), header, perl = TRUE)
         id <- gsub('\t', '', regmatches(header, match))
         name <- system(sprintf('grep %s %s | cut -d \' \' -f 3 | tr -d \'\n\'',
@@ -235,31 +235,26 @@ tomtom <- function (pspm, outputPath, databases) {
                                ), intern = TRUE)
         return(name)
     }
-   lines <- readLines(file.path(outputPath, motifName, 'tomtom.txt'), n= -1L)
+   lines <- readLines(file.path(outputPath, motif, 'tomtom.txt'), n= -1L)
    lines <- lines[2:length(lines)]
-   factors <- as.vector(unlist(map(extractMotifId, lines)))
+   factors <- as.vector(unlist(map(extractMotifName, lines)))
    combined <- as.vector(unlist(map(function(x, y)
                                     paste(x, y, sep = '\t'),
                                     lines, factors)))
 
-   write.table(file = file.path(outputPath, motifName, 'tomtom.txt'), combined,
-               col.names = paste(c('QueryID', 'TargetID', 'Offset', 'pvalue',
-                                   'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
-                                   'TargetConsensus', 'Orientation', 'Factor'),
-                                 collapse = '\t'),
-               row.names = FALSE,
-               quote = FALSE)
-   print('tomtom function')
+#   write.table(file = file.path(outputPath, motif, 'tomtom.txt'), combined,
+#               col.names = paste(c('QueryID', 'TargetID', 'Offset', 'pvalue',
+#                                   'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
+#                                   'TargetConsensus', 'Orientation', 'Factor'),
+#                                 collapse = '\t'),
+#               row.names = FALSE,
+#               quote = FALSE)
+#
+   motifId <- read.table(pipe(sprintf('cut -f 2 %s',
+                                     file.path(outputPath, motif, 'tomtom.txt'))),
+                         header = TRUE)
+   return(list(motif= motif, motif_id= motifId, motif_name = factors))
 }# }}}
-
-
-# end of fold sections # }}}
-
-#loci <- getLocus(args$peaks)
-#seq_motifs(loci, args$npeaks, output_path)
-pspm <- meme(output_path)
-map(tomtom, pspm, output_path)
-
 
 # Get sequences for peaks # {{{
 seq_general <- function(regions){
@@ -361,17 +356,28 @@ getPeakProfile <- function(peaks, pspm, window){
     return(profile)
 }# }}}
 
+runPeakProfileOnAlil <- function(peaks, motifs){
+    # pspm has to be t() because we need the rows to A,C,T,G
+    scanned <- scanPeaks(peaks, t(ps), "80%")
+    elementMetadata(peaks)$motif_hits <- as.integer(scanned[, 'hits'])
+    profile <- getPeakProfile(peaks, t(ps), 200)
+}
+
+# end of fold sections # }}}
+
 peaks <- macs2GRanges(args$peaks)
 peaks <- add.seqlengths(peaks, chr_size)
 peaks <- peaks[order(-values(peaks)$score)]
 names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
 elementMetadata(peaks)$seqs <- seq_general(peaks)
 
-# pspm has to be t() because we need the rows to A,C,T,G
-scanned <- scanPeaks(peaks, t(ps), "80%")
-elementMetadata(peaks)$motif_hits <- as.integer(scanned[, 'hits'])
+#loci <- getLocus(args$peaks)
+#seq_motifs(loci, args$npeaks, output_path)
+pspm <- meme(output_path)
+motifs <- map(tomtom, pspm, output_path)
 
-profile <- getPeakProfile(peaks, t(ps), 200)
+
+
 
 pdf(file.path(plot_path, 'motifs-summary.pdf'))
 p <- ggplot(as.data.frame(elementMetadata(peaks)), aes(motif_hits))
