@@ -357,10 +357,20 @@ getPeakProfile <- function(peaks, pspm, window){
 }# }}}
 
 runPeakProfileOnAlil <- function(peaks, motifs){
+    pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2009_vertebrates.meme"))
+
+    pspms <- sapply(1:length(motifs), function(indx, db){
+                                        ids <- levels(unlist(motifs[[indx]]$motif_id))
+                                        tmatrix <- lapply(ids, function(x) t(db[[x]]$matrix))
+                                        names(tmatrix) <- ids
+                                        return(tmatrix)
+                                        }, pspmDb)
+
+
     # pspm has to be t() because we need the rows to A,C,T,G
-    scanned <- scanPeaks(peaks, t(ps), "80%")
+    scanned <- scanPeaks(peaks, t(pspm), "80%")
     elementMetadata(peaks)$motif_hits <- as.integer(scanned[, 'hits'])
-    profile <- getPeakProfile(peaks, t(ps), 200)
+    profile <- getPeakProfile(peaks, t(pspm), 200)
 }
 
 # end of fold sections # }}}
