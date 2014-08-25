@@ -187,7 +187,7 @@ pspmHeader <- function (pspm){# {{{
 
 # Run MEME# {{{
 meme <- function(output) {
-        memeBin <- 'meme'
+    memeBin <- 'meme'
     # nmotifs = max number of motifs to find
     # minsites= min number of sites for each motif
     # minw = min width of motif, maxw = max n of motifs
@@ -196,13 +196,13 @@ meme <- function(output) {
     # -evt = stop if motif E-value greater than <evt>
     # possibly don't limit to 3 motifs but filter by E-value
 
-    #system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
-    #               memeBin,
-    #               paste0(output, '.fa'),
-    #               file.path(output),
-    #               round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
-    #               ))
-    #
+    system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
+                   memeBin,
+                   paste0(output, '.fa'),
+                   file.path(output),
+                   round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+                   ))
+
 
     parsePspm(file.path(output))
 } # }}}
@@ -219,11 +219,11 @@ tomtom <- function (pspm, outputPath, databases) {
                                c('JASPAR_CORE_2014_vertebrates.meme',
                                  'uniprobe_mouse.meme'))
     
-#    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
-#                   'tomtom',
-#                   file.path(outputPath, motif),
-#                   inputFile,
-#                   databases))
+    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
+                   'tomtom',
+                   file.path(outputPath, motif),
+                   inputFile,
+                   databases))
 
     extractMotifName <- function (header){
         match <- regexpr(sprintf('\\t(\\S+)\\t'), header, perl = TRUE)
@@ -359,7 +359,7 @@ runPeakProfileOnAlil <- function(peaks, motifs){
     pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2009_vertebrates.meme"))
     pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
-    pdf(file.path(plot_path, 'motifs-summary-2.pdf'))
+    pdf(file.path(plot_path, 'motifs-summary-2.pdf'), paper='a4')
     library(gridExtra)
     #1:length(motifs)
     pspms <- sapply(1, function(indx, db){
@@ -377,10 +377,12 @@ runPeakProfileOnAlil <- function(peaks, motifs){
                     p <- vector("list", length(results)*2)
                     for (i in seq(1, length(results)*2, 2)) {
                         x <- abs(i/2)
-                        a <- ggplot(as.data.frame(results[[x]][['hits']], stringsAsFactors = FALSE),
-                                    aes(hits))
-                        a <- a + geom_bar(stat = "bin") + geom_hline(yintercept=0, colour="white", size=0.5)
-#                        a <- a + theme(plot.title = paste0('Motif', indx, ':', names(results)[x]))
+                        tmp <- as.data.frame(results[[x]][['hits']])
+                        # Convert factor to numeric values so that x-axis is sorted
+                        tmp$hits <- as.numeric(as.character(tmp$hits))
+                        a <- ggplot(tmp, aes(hits))
+                        a <- a + geom_bar(stat = "bin", binwidth = 1) + geom_hline(yintercept=0, colour="white", size=0.5)
+                        a <- a + theme(plot.title = paste0('Motif', indx, ':', names(results)[x]))
 
                         b <- ggplot(as.data.frame(results[[x]][['profile']]), aes(x=position, y=frequency))
                         b <- b + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
@@ -389,7 +391,10 @@ runPeakProfileOnAlil <- function(peaks, motifs){
                         p[[i]] <- a
                         p[[i+1]] <- b
                     }
-                    do.call(grid.arrange, c(p, nrow = 2))
+                    # call marrangeGrob instead of grid.arrange so that the plots span
+                    # multiple pdf pages as in answer in 
+                    # <http://stackoverflow.com/questions/19059826/multiple-graphs-over-multiple-pages-using-ggplot>
+                    do.call(marrangeGrob, c(p, nrow = 3, ncol = 2))
                                         }, pspmDb)
     dev.off()
 }
@@ -402,9 +407,9 @@ peaks <- peaks[order(-values(peaks)$score)]
 names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
 elementMetadata(peaks)$seqs <- seq_general(peaks)
 
-#loci <- getLocus(args$peaks)
-#seq_motifs(loci, args$npeaks, output_path)
-pspm <- meme(output_path)
+loci <- getLocus(args$peaks)
+seq_motifs(loci, args$npeaks, output_path)
+pspm <- meme(file.path(output_path, paste0(args$mode, args$npeaks)))
 motifs <- map(tomtom, pspm, output_path)
 
 
