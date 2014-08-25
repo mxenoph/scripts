@@ -284,17 +284,16 @@ parsePspmDb <- function (databasePath) {
     start <- grep('^MOTIF \\S+', lines) + 2
     name <- extractName(lines[start-2])
     length <- extractHeader('w', lines[start])
-    nsites <- extractHeader('nsites', lines[start])
     evalue <- extractHeader('E', lines[start])
     matrix <- map(.(start, end = read.table(text = paste(lines[start : end],
                                                          collapse = '\n'),
                                             col.names = c('A', 'C', 'G', 'T'))),
                   start + 1, start + length)
 
-    pspm <- map(.(matrix, nsites, evalue =
+    pspm <- map(.(matrix, evalue =
                   let(str = list(name = name, matrix = matrix, nsites = nsites, e = evalue),
                       structure(str, class = 'pspm'))),
-                matrix, nsites, evalue)
+                matrix, evalue)
     names(pspm) <- name
     return(pspm)
 }# }}}
@@ -358,19 +357,41 @@ getPeakProfile <- function(peaks, pspm, window){
 
 runPeakProfileOnAlil <- function(peaks, motifs){
     pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2009_vertebrates.meme"))
+    pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
-    pspms <- sapply(1:length(motifs), function(indx, db){
-                                        ids <- levels(unlist(motifs[[indx]]$motif_id))
-                                        tmatrix <- lapply(ids, function(x) t(db[[x]]$matrix))
-                                        names(tmatrix) <- ids
-                                        return(tmatrix)
+    pdf(file.path(plot_path, 'motifs-summary-2.pdf'))
+    library(gridExtra)
+    #1:length(motifs)
+    pspms <- sapply(1, function(indx, db){
+                    ids <- levels(unlist(motifs[[indx]]$motif_id))
+                    results <- lapply(ids[1:2], function(x){
+                                      pspm <- t(db[[x]]$matrix)
+                                      scanned <- scanPeaks(peaks, pspm, "80")
+                                      profile <- getPeakProfile(peaks, pspm, 200)
+
+                                      result <- list(hits = scanned, profile = profile)
+                                      return(result)
+                                       })
+                    names(results) <- ids[1:2]
+
+                    p <- vector("list", length(results)*2)
+                    for (i in seq(1, length(results)*2, 2)) {
+                        x <- abs(i/2)
+                        a <- ggplot(as.data.frame(results[[x]][['hits']], stringsAsFactors = FALSE),
+                                    aes(hits))
+                        a <- a + geom_bar(stat = "bin") + geom_hline(yintercept=0, colour="white", size=0.5)
+#                        a <- a + theme(plot.title = paste0('Motif', indx, ':', names(results)[x]))
+
+                        b <- ggplot(as.data.frame(results[[x]][['profile']]), aes(x=position, y=frequency))
+                        b <- b + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
+                                                alpha = frequency))
+                        b <- b + guides(colour = FALSE)
+                        p[[i]] <- a
+                        p[[i+1]] <- b
+                    }
+                    do.call(grid.arrange, c(p, nrow = 2))
                                         }, pspmDb)
-
-
-    # pspm has to be t() because we need the rows to A,C,T,G
-    scanned <- scanPeaks(peaks, t(pspm), "80%")
-    elementMetadata(peaks)$motif_hits <- as.integer(scanned[, 'hits'])
-    profile <- getPeakProfile(peaks, t(pspm), 200)
+    dev.off()
 }
 
 # end of fold sections # }}}
@@ -387,25 +408,6 @@ pspm <- meme(output_path)
 motifs <- map(tomtom, pspm, output_path)
 
 
-
-
-pdf(file.path(plot_path, 'motifs-summary.pdf'))
-p <- ggplot(as.data.frame(elementMetadata(peaks)), aes(motif_hits))
-p <- p + geom_bar(stat = "bin")
-# removes the extra base line added by ggplot at y=0
-# TODO: find a better solution to get rid of it
-p <- p + geom_hline(yintercept=0, colour="white", size=0.5)
-p
-
-p <- ggplot(profile, aes(x=position, y=frequency)) 
-p <- p + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
-                        alpha = frequency))
-p <- p + guides(colour = FALSE)
-p
-dev.off()
-
-
-
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
 # print(paste0("Getting sequences for bottom ", n, " peaks"))
@@ -416,3 +418,27 @@ dev.off()
 # writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
 ## }}}
 
+# ggplot specific# {{{
+require(grid)
+vp.layout <- function(x, y) viewport(layout.pos.row=x, layout.pos.col=y)
+arrange_ggplot2 <- function(..., nrow=NULL, ncol=NULL, as.table=FALSE) {
+    dots <- list(...)
+    n <- length(dots)
+    if(is.null(nrow) & is.null(ncol)) { nrow = floor(n/2) ; ncol = ceiling(n/nrow)}
+    if(is.null(nrow)) { nrow = ceiling(n/ncol)}
+    if(is.null(ncol)) { ncol = ceiling(n/nrow)}
+    ## NOTE see n2mfrow in grDevices for possible alternative
+    grid.newpage()
+    pushViewport(viewport(layout=grid.layout(nrow,ncol) ) )
+    ii.p <- 1
+    for(ii.row in seq(1, nrow)){
+        ii.table.row <- ii.row  
+        if(as.table) {ii.table.row <- nrow - ii.table.row + 1}
+        for(ii.col in seq(1, ncol)){
+            ii.table <- ii.p
+            if(ii.p > n) break
+            print(dots[[ii.table]], vp=vp.layout(ii.table.row, ii.col))
+            ii.p <- ii.p + 1
+        }
+    }
+}# }}}
