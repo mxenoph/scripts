@@ -357,7 +357,7 @@ getPeakProfile <- function(peaks, pspm, window){
 }# }}}
 
 runPeakProfileOnAlil <- function(peaks, motifs){
-    pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2009_vertebrates.meme"))
+    pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2014_vertebrates.meme"))
     pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
     pdf(file.path(plot_path, 'motifs-summary.pdf'), paper='a4')
@@ -365,10 +365,8 @@ runPeakProfileOnAlil <- function(peaks, motifs){
     #1:length(motifs)
     pspms <- sapply(1, function(indx, db){
                     ids <- levels(unlist(motifs[[indx]]$motif_id))
-                    print(ids)
-                    print(db[[ids[1]]]$matrix)
                     results <- lapply(ids[1:2], function(x){
-                                      pspm <- t(as.matrix(db[[x]]$matrix))
+                                      pspm <- t(db[[x]]$matrix)
                                       scanned <- scanPeaks(peaks, pspm, "80")
                                       profile <- getPeakProfile(peaks, pspm, 200)
 
@@ -376,6 +374,7 @@ runPeakProfileOnAlil <- function(peaks, motifs){
                                       return(result)
                                        })
                     names(results) <- ids[1:2]
+                    print(results)
 
                     p <- vector("list", length(results)*2)
                     for (i in seq(1, length(results)*2, 2)) {
@@ -399,6 +398,7 @@ runPeakProfileOnAlil <- function(peaks, motifs){
                     # <http://stackoverflow.com/questions/19059826/multiple-graphs-over-multiple-pages-using-ggplot>
                     do.call(marrangeGrob, c(p, nrow = 3, ncol = 2))
                                         }, pspmDb)
+    print(p)
     dev.off()
 }
 
