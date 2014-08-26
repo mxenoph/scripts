@@ -16,7 +16,7 @@ plot_path <- file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 
 # function in annotation-functions.R
-# returns chr_size and annotation directly in the current environment
+# returns chr_size and genes_gtf directly in the current environment
 annotationInfo(tolower(args$assembly))
 
 # define variables
@@ -26,29 +26,94 @@ annotationInfo(tolower(args$assembly))
 options(warn = -1)
 # Required for file_path_sans_ext()
 library(tools)
-library(GenomicRanges)
-library(GenomicFeatures)
-library(plyr) # for revaluing factors
-library(ShortRead)
-library(Rsamtools)
+library(dplyr)
+# IMPORTANT: if Genomic Features and hence AnnotatioDbi are needed the select 
+# function from dplyr is masked and hence gives error
+
+#library(GenomicRanges)
+#library(GenomicFeatures)
+#library(plyr) # for revaluing factors
+#library(ShortRead)
+#library(Rsamtools)
 options(warn = 0)# }}}
 
-bedtoolsClosest <- function(bed, annotation, output_path){
-    output <- paste0(basename(file_path_sans_ext(args$bed)), '-annotated')
+map <- base::Map
+# Cause something masks these functions and nothing works after
+summarise <- dplyr::summarise
+select <- dplyr::select
+
+let <- function (.expr, ...)
+    eval(substitute(.expr), list2env(list(...), parent = parent.frame()))
+
+parseBedtools <- function(annotated){
+
+    # Keep only gene name from attribute field
+    extractAttribute <- function(name, header){
+        gsub(';', '', gsub(name, '', let(match = regexpr(sprintf('%s\\S+', name), header, perl = TRUE),
+                                         as.character(regmatches(header, match)))))
+    }
+
+    readout <- read.table(annotated,
+                          col.names = c(paste('bed',
+                                              c('chr', 'start', 'end', 'name', 'score'),
+                                              sep = '_'),
+                                        paste('gtf',
+                                              c('chr', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute'),
+                                              sep = '_'),
+                                        'closest_distance'
+                                        ),
+                          sep='\t')
+
+#    genes <- unlist(map(extractAttribute, readout[['gtf_attribute']], name='^ gene_id '))
+#    trx_name <- unlist(map(extractAttribute, readout[['gtf_attribute']], name=' transcript_name '))
+
+    # Converted to dplyr dataframe to make things faster and easier
+    readout_df <- tbl_df(readout)
+
+    genes <- unname(unlist(map(extractAttribute, select(readout_df, gtf_attribute), name='^ gene_id ')))
+    # might be good idea to remove this and make it more generic for all types of gtf provided to bedtoolsClosest
+    gene_name <- unname(unlist(map(extractAttribute, select(readout_df, gtf_attribute), name=' gene_name ')))
+
+    # %.% is a chain operator. For more detailed explanation see 
+    # http://stackoverflow.com/questions/22314680/how-to-use-the-operator-in-r>
+    readout_df <- readout_df %.%
+                    select(bed_chr:bed_score, gtf_feature, gtf_strand, closest_distance) %.%
+                    mutate(gene = genes,
+                           gene_name = gene_name)
+    # Mark as targets genes that are 2Kb upstream the features start and 1Kb downstream
+    readout_df <- readout_df %.% mutate(target = ifelse(closest_distance >= -2000 & closest_distance <= 1000, 1, 0))
+
+    readout_df %.%
+    group_by(bed_name) %.%
+    select(gene)
+
+
+
+}
+
+bedtoolsClosest <- function(bed, annotation, output_path){# {{{
+    output <- paste0(basename(file_path_sans_ext(bed)),
+                     '-annotated',
+                     '.txt')
     
     system(sprintf('bedtools closest -D "b" -a %s -b %s > %s',
                bed,
                annotation, # coming from the annotationInfo function
-               file.path(output_path, output, '.txt')
+               file.path(output_path, output)
                ))
     # Example output; last column is the distance from the feature -- here across multiple lines for readability
     # chr1	3373072 3373608	MACS_peak_1	128.12	\n
     # chr1	protein_coding  exon	3411783	3411982	.	-	.	\n
     # gene_id "ENSMUSG00000051951"; transcript_id "ENSMUST00000070533"; exon_number "2"; gene_name "Xkr4"; gene_biotype "protein_coding"; transcript_name "Xkr4-001";	38175
-}
+    # IMPORTANT: Negative distances report upstream features i.e. peak is upstream of gene
+    parseBedtools(file.path(output_path, output))
+}# }}}
+
+bedtoolsClosest(args$bed, genes_gtf, output_path)
 
 
 # Old code # {{{
+old <- function(){
 setwd('/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/hendrichChIP/macs')
 peakFiles <- list.files(pattern="*Epi*.peaks.bed")
 
@@ -194,4 +259,5 @@ dev.off()
 #                         ranges=IRanges(bam$pos, width=bam$qwidth))
 #counts.m2=countOverlaps(tx, IRange.reads)
 #
+}
 # }}}
