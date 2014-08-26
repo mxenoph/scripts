@@ -195,12 +195,13 @@ meme <- function(output) {
     # maxsize = minimum dataset size in characters
     # -evt = stop if motif E-value greater than <evt>
     # possibly don't limit to 3 motifs but filter by E-value
+    fasta <- list.files(output, pattern = ".fa", full.name = TRUE)
 
     system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
                    memeBin,
-                   paste0(output, '.fa'),
+                   fasta,
                    file.path(output),
-                   round(as.numeric(system(paste0("wc -c ", paste0(output, '.fa'), " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+                   round(as.numeric(system(paste0("wc -c ", fasta, " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
                    ))
 
 
@@ -242,14 +243,14 @@ tomtom <- function (pspm, outputPath, databases) {
                                     paste(x, y, sep = '\t'),
                                     lines, factors)))
 
-#   write.table(file = file.path(outputPath, motif, 'tomtom.txt'), combined,
-#               col.names = paste(c('QueryID', 'TargetID', 'Offset', 'pvalue',
-#                                   'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
-#                                   'TargetConsensus', 'Orientation', 'Factor'),
-#                                 collapse = '\t'),
-#               row.names = FALSE,
-#               quote = FALSE)
-#
+   write.table(file = file.path(outputPath, motif, 'tomtom.txt'), combined,
+               col.names = paste(c('QueryID', 'TargetID', 'Offset', 'pvalue',
+                                   'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
+                                   'TargetConsensus', 'Orientation', 'Factor'),
+                                 collapse = '\t'),
+               row.names = FALSE,
+               quote = FALSE)
+
    motifId <- read.table(pipe(sprintf('cut -f 2 %s',
                                      file.path(outputPath, motif, 'tomtom.txt'))),
                          header = TRUE)
@@ -291,7 +292,7 @@ parsePspmDb <- function (databasePath) {
                   start + 1, start + length)
 
     pspm <- map(.(matrix, evalue =
-                  let(str = list(name = name, matrix = matrix, nsites = nsites, e = evalue),
+                  let(str = list(name = name, matrix = matrix, e = evalue),
                       structure(str, class = 'pspm'))),
                 matrix, evalue)
     names(pspm) <- name
@@ -359,13 +360,15 @@ runPeakProfileOnAlil <- function(peaks, motifs){
     pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2009_vertebrates.meme"))
     pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
-    pdf(file.path(plot_path, 'motifs-summary-2.pdf'), paper='a4')
+    pdf(file.path(plot_path, 'motifs-summary.pdf'), paper='a4')
     library(gridExtra)
     #1:length(motifs)
     pspms <- sapply(1, function(indx, db){
                     ids <- levels(unlist(motifs[[indx]]$motif_id))
+                    print(ids)
+                    print(db[[ids[1]]]$matrix)
                     results <- lapply(ids[1:2], function(x){
-                                      pspm <- t(db[[x]]$matrix)
+                                      pspm <- t(as.matrix(db[[x]]$matrix))
                                       scanned <- scanPeaks(peaks, pspm, "80")
                                       profile <- getPeakProfile(peaks, pspm, 200)
 
@@ -382,7 +385,7 @@ runPeakProfileOnAlil <- function(peaks, motifs){
                         tmp$hits <- as.numeric(as.character(tmp$hits))
                         a <- ggplot(tmp, aes(hits))
                         a <- a + geom_bar(stat = "bin", binwidth = 1) + geom_hline(yintercept=0, colour="white", size=0.5)
-                        a <- a + theme(plot.title = paste0('Motif', indx, ':', names(results)[x]))
+                        a <- a + labs(title = paste0('Motif', indx, ':', names(results)[x]))
 
                         b <- ggplot(as.data.frame(results[[x]][['profile']]), aes(x=position, y=frequency))
                         b <- b + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
@@ -409,9 +412,10 @@ elementMetadata(peaks)$seqs <- seq_general(peaks)
 
 loci <- getLocus(args$peaks)
 seq_motifs(loci, args$npeaks, output_path)
-pspm <- meme(file.path(output_path, paste0(args$mode, args$npeaks)))
+pspm <- meme(output_path)
 motifs <- map(tomtom, pspm, output_path)
 
+runPeakProfileOnAlil(peaks, motifs)
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
