@@ -1,9 +1,54 @@
-require('GenomicRanges')
-require('GenomicFeatures')
-require('plyr') # for revaluing factors
-require('ShortRead')
-require('Rsamtools')
+#!/usr/bin/env Rscript
 
+# Parse arguments # {{{
+library(argparse)
+source("~/source/Rscripts/annotation-functions.R")
+
+parser <-  ArgumentParser(description="Annotate any range. The gtf passed could be a default ensembl gtf or a custom one")
+parser$add_argument('-b', '--bed', metavar= "file", required='True', type= "character", help= "BED file")
+parser$add_argument('-a', '--assembly', type= "character", default='mm9', help= "Give preferred assembly e.g. mm9. Default: mm9")
+parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
+
+args <- parser$parse_args()
+
+output_path <- file.path(args$out, 'annotated')
+plot_path <- file.path(output_path, 'plots')
+dir.create(plot_path, recursive= TRUE)
+
+# function in annotation-functions.R
+# returns chr_size and annotation directly in the current environment
+annotationInfo(tolower(args$assembly))
+
+# define variables
+# }}}
+
+# Import libraries & Turn off warning messages for loading the packages-globally# {{{
+options(warn = -1)
+# Required for file_path_sans_ext()
+library(tools)
+library(GenomicRanges)
+library(GenomicFeatures)
+library(plyr) # for revaluing factors
+library(ShortRead)
+library(Rsamtools)
+options(warn = 0)# }}}
+
+bedtoolsClosest <- function(bed, annotation, output_path){
+    output <- paste0(basename(file_path_sans_ext(args$bed)), '-annotated')
+    
+    system(sprintf('bedtools closest -D "b" -a %s -b %s > %s',
+               bed,
+               annotation, # coming from the annotationInfo function
+               file.path(output_path, output, '.txt')
+               ))
+    # Example output; last column is the distance from the feature -- here across multiple lines for readability
+    # chr1	3373072 3373608	MACS_peak_1	128.12	\n
+    # chr1	protein_coding  exon	3411783	3411982	.	-	.	\n
+    # gene_id "ENSMUSG00000051951"; transcript_id "ENSMUST00000070533"; exon_number "2"; gene_name "Xkr4"; gene_biotype "protein_coding"; transcript_name "Xkr4-001";	38175
+}
+
+
+# Old code # {{{
 setwd('/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/hendrichChIP/macs')
 peakFiles <- list.files(pattern="*Epi*.peaks.bed")
 
@@ -149,4 +194,4 @@ dev.off()
 #                         ranges=IRanges(bam$pos, width=bam$qwidth))
 #counts.m2=countOverlaps(tx, IRange.reads)
 #
-
+# }}}
