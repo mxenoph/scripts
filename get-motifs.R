@@ -304,7 +304,9 @@ extractPspmMatches <- function(pspm, sequence, threshold, summit){
     # Get all matches for pspm
     # needs a numeric matrix with rows A,C,T,G, the minimum score for counting a match
     # that could be a percentage of the highest possible score or a number
-    match <- matchPWM(pspm, sequence, min.score = threshold)
+   match <- matchPWM(pspm, sequence, min.score = threshold)
+#   rmatch <- matchPWM(reverseComplement(pspm), sequence, min.score = threshold)
+
     if (length(match) == 0)
         found <- cbind(NA, NA, 0)
     else
@@ -323,8 +325,8 @@ scanPeaks <- function(peaks, pspm, threshold){
     # Get sequences for all peaks
     sequences <- elementMetadata(peaks)$seqs
     motifs <- sapply(1:length(sequences),
-                     function(indx)
-                         extractPspmMatches(pspm, sequences[indx], threshold, elementMetadata(peaks)$summit[indx]))
+                     function(indx){
+                         extractPspmMatches(pspm, sequences[indx], threshold, elementMetadata(peaks)$summit[indx])})
     motifs <- t(motifs)
     rownames(motifs) <- names(peaks)
     return(motifs)
@@ -334,8 +336,8 @@ scanPeaks <- function(peaks, pspm, threshold){
 getPeakProfile <- function(peaks, pspm, window){
     summits <- GRanges(seqnames = seqnames(peaks),
                        range = IRanges(start = elementMetadata(peaks)[['summit']] - window,
-                                       end = elementMetadata(peaks)[['summit']]),
-                       strand = '+', 
+                                       end = elementMetadata(peaks)[['summit']]) + window,
+                       strand = '+',
                        summit = elementMetadata(peaks)[['summit']])
     names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=':')
 
@@ -356,16 +358,15 @@ getPeakProfile <- function(peaks, pspm, window){
     return(profile)
 }# }}}
 
-runPeakProfileOnAlil <- function(peaks, motifs){
+runPeakProfileOnAll <- function(peaks, motifs){# {{{
     pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2014_vertebrates.meme"))
     pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
-    pdf(file.path(plot_path, 'motifs-summary.pdf'), paper='a4')
     library(gridExtra)
-    #1:length(motifs)
-    pspms <- sapply(1, function(indx, db){
+    pspms <- sapply(1:length(motifs), function(indx, db){
                     ids <- levels(unlist(motifs[[indx]]$motif_id))
-                    results <- lapply(ids[1:2], function(x){
+                    mnames <- levels(unlist(motifs[[indx]]$motif_name))
+                    results <- lapply(ids, function(x){
                                       pspm <- t(db[[x]]$matrix)
                                       scanned <- scanPeaks(peaks, pspm, "80")
                                       profile <- getPeakProfile(peaks, pspm, 200)
@@ -373,12 +374,11 @@ runPeakProfileOnAlil <- function(peaks, motifs){
                                       result <- list(hits = scanned, profile = profile)
                                       return(result)
                                        })
-                    names(results) <- ids[1:2]
-                    print(results)
+                    names(results) <- paste(ids, mnames, sep=':')
 
                     p <- vector("list", length(results)*2)
                     for (i in seq(1, length(results)*2, 2)) {
-                        x <- abs(i/2)
+                        x <- ceiling(i/2)
                         tmp <- as.data.frame(results[[x]][['hits']])
                         # Convert factor to numeric values so that x-axis is sorted
                         tmp$hits <- as.numeric(as.character(tmp$hits))
@@ -389,18 +389,18 @@ runPeakProfileOnAlil <- function(peaks, motifs){
                         b <- ggplot(as.data.frame(results[[x]][['profile']]), aes(x=position, y=frequency))
                         b <- b + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
                                                 alpha = frequency))
-                        b <- b + guides(colour = FALSE)
+                        b <- b + guides(colour = FALSE) + theme(legend.position='none')
                         p[[i]] <- a
                         p[[i+1]] <- b
                     }
                     # call marrangeGrob instead of grid.arrange so that the plots span
                     # multiple pdf pages as in answer in 
                     # <http://stackoverflow.com/questions/19059826/multiple-graphs-over-multiple-pages-using-ggplot>
-                    do.call(marrangeGrob, c(p, nrow = 3, ncol = 2))
-                                        }, pspmDb)
-    print(p)
-    dev.off()
-}
+                    # top=NULL removes page numbers
+                    multipage <- do.call(marrangeGrob, c(p, nrow = 3, ncol = 2, top = NULL))
+                    ggsave(file.path(plot_path, paste0('summary-motif', indx, '.pdf')), multipage, width = 8.3, height = 11.7)
+                          }, pspmDb)
+}# }}}
 
 # end of fold sections # }}}
 
@@ -415,7 +415,7 @@ seq_motifs(loci, args$npeaks, output_path)
 pspm <- meme(output_path)
 motifs <- map(tomtom, pspm, output_path)
 
-runPeakProfileOnAlil(peaks, motifs)
+runPeakProfileOnAll(peaks, motifs)
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
