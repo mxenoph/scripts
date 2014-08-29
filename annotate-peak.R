@@ -45,7 +45,7 @@ select <- dplyr::select
 let <- function (.expr, ...)
     eval(substitute(.expr), list2env(list(...), parent = parent.frame()))
 
-parseBedtools <- function(annotated){
+parseBedtools <- function(annotated){# {{{
 
     # Keep only gene name from attribute field
     extractAttribute <- function(name, header){
@@ -74,22 +74,25 @@ parseBedtools <- function(annotated){
     # might be good idea to remove this and make it more generic for all types of gtf provided to bedtoolsClosest
     gene_name <- unname(unlist(map(extractAttribute, select(readout_df, gtf_attribute), name=' gene_name ')))
 
-    # %.% is a chain operator. For more detailed explanation see 
+    # %.% == %>% is a chain operator. For more detailed explanation see 
     # http://stackoverflow.com/questions/22314680/how-to-use-the-operator-in-r>
-    readout_df <- readout_df %.%
-                    select(bed_chr:bed_score, gtf_feature, gtf_strand, closest_distance) %.%
+    readout_df <- readout_df %>%
+                    select(bed_chr:bed_score, gtf_feature, gtf_start, gtf_end, gtf_strand, closest_distance) %>%
                     mutate(gene = genes,
-                           gene_name = gene_name)
-    # Mark as targets genes that are 2Kb upstream the features start and 1Kb downstream
-    readout_df <- readout_df %.% mutate(target = ifelse(closest_distance >= -2000 & closest_distance <= 1000, 1, 0))
+                           gene_name = gene_name,
+                           # Mark as targets genes that are 2Kb upstream the features start and 1Kb downstream
+                           target = ifelse(closest_distance >= -2000 & closest_distance <= 1000, 1, 0),
+                           tss = ifelse(gtf_strand == '+', gtf_start, gtf_end))
+                    
+    readout_df <- tbl_df(adply(readout_df, 1, transform, dtts = min(abs(c(bed_start, bed_end)-tss))))
 
-    readout_df %.%
-    group_by(bed_name) %.%
-    select(gene)
+    readout_df %>%
+    group_by(bed_name) %>%
+    select(bed_start, bed_end, gene, gtf_start, gtf_end, gtf_strand, closest_distance, tss, test)
 
 
 
-}
+}# }}}
 
 bedtoolsClosest <- function(bed, annotation, output_path){# {{{
     output <- paste0(basename(file_path_sans_ext(bed)),
