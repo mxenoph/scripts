@@ -197,13 +197,13 @@ meme <- function(output) {
     # possibly don't limit to 3 motifs but filter by E-value
     fasta <- list.files(output, pattern = ".fa", full.name = TRUE)
 
-    system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
-                   memeBin,
-                   fasta,
-                   file.path(output),
-                   round(as.numeric(system(paste0("wc -c ", fasta, " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
-                   ))
-
+#    system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
+#                   memeBin,
+#                   fasta,
+#                   file.path(output),
+#                   round(as.numeric(system(paste0("wc -c ", fasta, " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+#                   ))
+#
 
     parsePspm(file.path(output))
 } # }}}
@@ -220,11 +220,11 @@ tomtom <- function (pspm, outputPath, databases) {
                                c('JASPAR_CORE_2014_vertebrates.meme',
                                  'uniprobe_mouse.meme'))
     
-    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
-                   'tomtom',
-                   file.path(outputPath, motif),
-                   inputFile,
-                   databases))
+#    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
+#                   'tomtom',
+#                   file.path(outputPath, motif),
+#                   inputFile,
+#                   databases))
 
     extractMotifName <- function (header){
         match <- regexpr(sprintf('\\t(\\S+)\\t'), header, perl = TRUE)
@@ -254,6 +254,8 @@ tomtom <- function (pspm, outputPath, databases) {
    motifId <- read.table(pipe(sprintf('cut -f 2 %s',
                                      file.path(outputPath, motif, 'tomtom.txt'))),
                          header = TRUE)
+   print('in tomtom')
+   print(factors)
    return(list(motif= motif, motif_id= motifId, motif_name = factors))
 }# }}}
 
@@ -305,19 +307,23 @@ extractPspmMatches <- function(pspm, sequence, threshold, summit){
     # needs a numeric matrix with rows A,C,T,G, the minimum score for counting a match
     # that could be a percentage of the highest possible score or a number
    match <- matchPWM(pspm, sequence, min.score = threshold)
-#   rmatch <- matchPWM(reverseComplement(pspm), sequence, min.score = threshold)
+   rmatch <- matchPWM(reverseComplement(pspm), sequence, min.score = threshold)
 
-    if (length(match) == 0)
-        found <- cbind(NA, NA, 0)
-    else
-        found <- cbind(start(match),
-                       as.character(match),
-                       length(start(match)))
-    colnames(found) <- c('start', 'seq', 'hits')
-
-    # Keep only the match that is closest to the summit, that's why we use abs()
-    found <- found[order(abs(as.integer(found[,'start']) - summit), decreasing = FALSE)[1], ]
-    return(found)
+   parseMatches <- function(match){
+       if (length(match) == 0)
+           found <- cbind(NA, NA, 0)
+       else
+           found <- cbind(start(match),
+                          as.character(match),
+                          length(start(match)))
+       colnames(found) <- c('start', 'seq', 'hits')
+       return(found)
+   }
+   found <- rbind(parseMatches(match), parseMatches(rmatch))
+   
+   # Keep only the match that is closest to the summit, that's why we use abs()
+   found <- found[order(abs(as.integer(found[,'start']) - summit), decreasing = FALSE)[1], ]
+   return(found)
 }# }}}
 
 # Scan peaks for a motif # {{{
@@ -347,6 +353,7 @@ getPeakProfile <- function(peaks, pspm, window){
     scanned <- scanned[!is.na(scanned[,'start']), ]
     # Get position covered by the motif
     positions <- sapply(as.integer(scanned[,'start']), function(x) x + ncol(pspm)-1)
+    # Frequency on the plot is how many peaks have a motif at that position
     positions <- data.frame(table(unlist(positions)))
     names(positions) <- c('position','frequency')
     # shift position relative to summit
@@ -358,20 +365,23 @@ getPeakProfile <- function(peaks, pspm, window){
     return(profile)
 }# }}}
 
-runPeakProfileOnAll <- function(peaks, motifs){# {{{
+runPeakProfileOnAll <- function(peaks, motifs, output_path){# {{{
     pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2014_vertebrates.meme"))
     pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
+    # Initialise data frame to hold all information for all motifs
+    tsv <- data.frame()
     library(gridExtra)
     pspms <- sapply(1:length(motifs), function(indx, db){
-                    ids <- levels(unlist(motifs[[indx]]$motif_id))
-                    mnames <- levels(unlist(motifs[[indx]]$motif_name))
+                    ids <- as.character(unlist(motifs[[indx]]$motif_id))
+                    mnames <- motifs[[indx]]$motif_name
                     results <- lapply(ids, function(x){
                                       pspm <- t(db[[x]]$matrix)
                                       scanned <- scanPeaks(peaks, pspm, "80")
                                       profile <- getPeakProfile(peaks, pspm, 200)
+                                      positions <- sapply(as.integer(scanned[,'start']), function(x) x + ncol(pspm)-1)
 
-                                      result <- list(hits = scanned, profile = profile)
+                                      result <- list(hits = scanned, profile = profile, positions = positions)
                                       return(result)
                                        })
                     names(results) <- paste(ids, mnames, sep=':')
@@ -392,6 +402,8 @@ runPeakProfileOnAll <- function(peaks, motifs){# {{{
                         b <- b + guides(colour = FALSE) + theme(legend.position='none')
                         p[[i]] <- a
                         p[[i+1]] <- b
+
+                        tsv <- cbind(tsv, results[[x]][['positions']])
                     }
                     # call marrangeGrob instead of grid.arrange so that the plots span
                     # multiple pdf pages as in answer in 
@@ -399,6 +411,10 @@ runPeakProfileOnAll <- function(peaks, motifs){# {{{
                     # top=NULL removes page numbers
                     multipage <- do.call(marrangeGrob, c(p, nrow = 3, ncol = 2, top = NULL))
                     ggsave(file.path(plot_path, paste0('summary-motif', indx, '.pdf')), multipage, width = 8.3, height = 11.7)
+
+                    rownames(tsv) <- names(peaks)
+                    colnames(tsv) <- names(results)
+                    write.table(tsv, file.path(output_path, paste0('motif', ind, '-summit-centered-positions', 'tsv')))
                           }, pspmDb)
 }# }}}
 
@@ -415,7 +431,7 @@ seq_motifs(loci, args$npeaks, output_path)
 pspm <- meme(output_path)
 motifs <- map(tomtom, pspm, output_path)
 
-runPeakProfileOnAll(peaks, motifs)
+runPeakProfileOnAll(peaks, motifs, output_path)
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
