@@ -180,7 +180,7 @@ consensusSequence <- function (pspm){# {{{
 
 pspmHeader <- function (pspm){# {{{
     paste(sprintf('MOTIF %s', consensusSequence(pspm)),
-          sprintf('letter-probability matrix: alenght= %s w= %s nsites= %s E= %e',
+          sprintf('letter-probability matrix: alength= %s w= %s nsites= %s E= %e',
                   ncol(pspm$matrix), nrow(pspm$matrix), pspm$nsites, pspm$e),
           sep = '\n\n')
 }# }}}
@@ -197,13 +197,13 @@ meme <- function(output) {
     # possibly don't limit to 3 motifs but filter by E-value
     fasta <- list.files(output, pattern = ".fa", full.name = TRUE)
 
-#    system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
-#                   memeBin,
-#                   fasta,
-#                   file.path(output),
-#                   round(as.numeric(system(paste0("wc -c ", fasta, " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
-#                   ))
-#
+    system(sprintf('%s %s -dna -oc %s -maxsize %s -mod zoops -nmotifs 3 -evt 0.05 -minw 6 -maxw 35 -revcomp',
+                   memeBin,
+                   fasta,
+                   file.path(output),
+                   round(as.numeric(system(paste0("wc -c ", fasta, " | awk -F' ' '{print $1}'"), intern=TRUE)) -2)
+                   ))
+
 
     parsePspm(file.path(output))
 } # }}}
@@ -219,12 +219,12 @@ tomtom <- function (pspm, outputPath, databases) {
         databases <- file.path(memeDatabasePath,
                                c('JASPAR_CORE_2014_vertebrates.meme',
                                  'uniprobe_mouse.meme'))
-    
-#    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10 %s %s',
-#                   'tomtom',
-#                   file.path(outputPath, motif),
-#                   inputFile,
-#                   databases))
+   
+    system(sprintf('%s -no-ssc -oc %s -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 0.1 %s %s',
+                   'tomtom',
+                   file.path(outputPath, motif),
+                   inputFile,
+                   databases))
 
     extractMotifName <- function (header){
         match <- regexpr(sprintf('\\t(\\S+)\\t'), header, perl = TRUE)
@@ -237,25 +237,28 @@ tomtom <- function (pspm, outputPath, databases) {
         return(name)
     }
    lines <- readLines(file.path(outputPath, motif, 'tomtom.txt'), n= -1L)
-   lines <- lines[2:length(lines)]
-   factors <- as.vector(unlist(map(extractMotifName, lines)))
-   combined <- as.vector(unlist(map(function(x, y)
-                                    paste(x, y, sep = '\t'),
-                                    lines, factors)))
+   if ( length(lines) != 1 ){
+       lines <- lines[2:length(lines)]
+       factors <- as.vector(unlist(map(extractMotifName, lines)))
+       combined <- as.vector(unlist(map(function(x, y)
+                                        paste(x, y, sep = '\t'),
+                                        lines, factors)))
 
-   write.table(file = file.path(outputPath, motif, 'tomtom.txt'), combined,
-               col.names = paste(c('QueryID', 'TargetID', 'Offset', 'pvalue',
-                                   'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
-                                   'TargetConsensus', 'Orientation', 'Factor'),
-                                 collapse = '\t'),
-               row.names = FALSE,
-               quote = FALSE)
+       write.table(file = file.path(outputPath, motif, 'tomtom.txt'), combined,
+                   col.names = paste(c('QueryID', 'TargetID', 'Offset', 'pvalue',
+                                       'Evalue', 'qvalue', 'Overlap', 'QueryConsensus',
+                                       'TargetConsensus', 'Orientation', 'Factor'),
+                                     collapse = '\t'),
+                   row.names = FALSE,
+                   quote = FALSE)
 
-   motifId <- read.table(pipe(sprintf('cut -f 2 %s',
-                                     file.path(outputPath, motif, 'tomtom.txt'))),
-                         header = TRUE)
-   print('in tomtom')
-   print(factors)
+       motifId <- read.table(pipe(sprintf('cut -f 2 %s',
+                                         file.path(outputPath, motif, 'tomtom.txt'))),
+                             header = TRUE)
+   } else {
+       motifId <- c(NA)
+       factors <- c(NA)
+   }
    return(list(motif= motif, motif_id= motifId, motif_name = factors))
 }# }}}
 
@@ -319,7 +322,9 @@ extractPspmMatches <- function(pspm, sequence, threshold, summit){
        colnames(found) <- c('start', 'seq', 'hits')
        return(found)
    }
-   found <- rbind(parseMatches(match), parseMatches(rmatch))
+   fwd <- parseMatches(match)
+   rev <- parseMatches(rmatch)
+   found <- rbind(fwd, rev)
    
    # Keep only the match that is closest to the summit, that's why we use abs()
    found <- found[order(abs(as.integer(found[,'start']) - summit), decreasing = FALSE)[1], ]
@@ -369,53 +374,120 @@ runPeakProfileOnAll <- function(peaks, motifs, output_path){# {{{
     pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2014_vertebrates.meme"))
     pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
-    # Initialise data frame to hold all information for all motifs
-    tsv <- data.frame()
+    print('in runPeakall')
     library(gridExtra)
-    pspms <- sapply(1:length(motifs), function(indx, db){
-                    ids <- as.character(unlist(motifs[[indx]]$motif_id))
-                    mnames <- motifs[[indx]]$motif_name
-                    results <- lapply(ids, function(x){
-                                      pspm <- t(db[[x]]$matrix)
-                                      scanned <- scanPeaks(peaks, pspm, "80")
-                                      profile <- getPeakProfile(peaks, pspm, 200)
-                                      positions <- sapply(as.integer(scanned[,'start']), function(x) x + ncol(pspm)-1)
 
-                                      result <- list(hits = scanned, profile = profile, positions = positions)
-                                      return(result)
-                                       })
-                    names(results) <- paste(ids, mnames, sep=':')
+    getResults <- function(peaks, motif_id, db){
+        pspm <- t(db[[x]]$matrix)
+        scanned <- scanPeaks(peaks, pspm, "80")
+        profile <- getPeakProfile(peaks, pspm, 600)
 
-                    p <- vector("list", length(results)*2)
-                    for (i in seq(1, length(results)*2, 2)) {
-                        x <- ceiling(i/2)
-                        tmp <- as.data.frame(results[[x]][['hits']])
-                        # Convert factor to numeric values so that x-axis is sorted
-                        tmp$hits <- as.numeric(as.character(tmp$hits))
-                        a <- ggplot(tmp, aes(hits))
-                        a <- a + geom_bar(stat = "bin", binwidth = 1) + geom_hline(yintercept=0, colour="white", size=0.5)
-                        a <- a + labs(title = paste0('Motif', indx, ':', names(results)[x]))
+        relative_summit <- peaks$summit - start(peaks)
+        positions <- as.integer(scanned[,'start']) - relative_summit
+        positions <- positions + ncol(pspm)-1
 
-                        b <- ggplot(as.data.frame(results[[x]][['profile']]), aes(x=position, y=frequency))
-                        b <- b + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
-                                                alpha = frequency))
-                        b <- b + guides(colour = FALSE) + theme(legend.position='none')
-                        p[[i]] <- a
-                        p[[i+1]] <- b
+        result <- list(hits = scanned, profile = profile, positions = positions)
+        return(result)
+    }
 
-                        tsv <- cbind(tsv, results[[x]][['positions']])
-                    }
-                    # call marrangeGrob instead of grid.arrange so that the plots span
-                    # multiple pdf pages as in answer in 
-                    # <http://stackoverflow.com/questions/19059826/multiple-graphs-over-multiple-pages-using-ggplot>
-                    # top=NULL removes page numbers
-                    multipage <- do.call(marrangeGrob, c(p, nrow = 3, ncol = 2, top = NULL))
-                    ggsave(file.path(plot_path, paste0('summary-motif', indx, '.pdf')), multipage, width = 8.3, height = 11.7)
+    plotResult <- function(results){
+        p <- vector("list", length(results)*2)
+        for (i in seq(1, length(results)*2, 2)) {
+            x <- ceiling(i/2)
+            tmp <- as.data.frame(results[[x]][['hits']])
+            # Convert factor to numeric values so that x-axis is sorted
+            tmp$hits <- as.numeric(as.character(tmp$hits))
+            a <- ggplot(tmp, aes(hits))
+            a <- a + geom_bar(stat = "bin", binwidth = 1) + geom_hline(yintercept=0, colour="white", size=0.5)
+            a <- a + labs(title = paste0('Motif', indx, ':', names(results)[x]))
 
-                    rownames(tsv) <- names(peaks)
-                    colnames(tsv) <- names(results)
-                    write.table(tsv, file.path(output_path, paste0('motif', ind, '-summit-centered-positions', 'tsv')))
-                          }, pspmDb)
+            b <- ggplot(as.data.frame(results[[x]][['profile']]), aes(x=position, y=frequency))
+            b <- b + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
+                                    alpha = frequency))
+            b <- b + guides(colour = FALSE) + theme(legend.position='none')
+            p[[i]] <- a
+            p[[i+1]] <- b
+
+        }
+        # call marrangeGrob instead of grid.arrange so that the plots span
+        # multiple pdf pages as in answer in 
+        # <http://stackoverflow.com/questions/19059826/multiple-graphs-over-multiple-pages-using-ggplot>
+        # top=NULL removes page numbers
+        multipage <- do.call(marrangeGrob, c(p, nrow = 3, ncol = 2, top = NULL))
+        i <- unlist(strsplit(names(results), ":"))[1]
+        ggsave(file.path(plot_path, paste0('summary-', i, '.pdf')), multipage, width = 8.3, height = 11.7)
+    }
+
+    runAllMotifs <- function(motifs, peaks, db){
+        ids <- as.character(unlist(motifs[[indx]]$motif_id))
+        mnames <- motifs[[indx]]$motif_name
+
+        if (any(is.na(ids)) ) {
+            return()
+        } else {
+            results <- mclapply(ids, getResults, peaks=peaks, db=db)
+            names(results) <- paste(ids, manames, sep=':')
+            mclapply(results, plotResult)
+        }
+
+    }
+#    pspms <- sapply(1:length(motifs), function(indx, db){# {{{
+#    pspms <- lapply(1:length(motifs), function(indx, db){
+#                    ids <- as.character(unlist(motifs[[indx]]$motif_id))
+#                    mnames <- motifs[[indx]]$motif_name
+#
+#                    # Only run if tomtom found TFs matching the motif at FDR 0.1
+#                    if ( !any(is.na(ids)) ) {
+#                        results <- lapply(ids, function(x){
+#                                          pspm <- t(db[[x]]$matrix)
+#                                          scanned <- scanPeaks(peaks, pspm, "80")
+#                                          profile <- getPeakProfile(peaks, pspm, 600)
+#
+#                                          relative_summit <- peaks$summit - start(peaks)
+#                                          positions <- as.integer(scanned[,'start']) - relative_summit
+#                                          positions <- positions + ncol(pspm)-1
+#
+#                                          result <- list(hits = scanned, profile = profile, positions = positions)
+#                                          return(result)
+#                                           })
+#                        names(results) <- paste(ids, mnames, sep=':')
+#
+#                        p <- vector("list", length(results)*2)
+#                        for (i in seq(1, length(results)*2, 2)) {
+#                            x <- ceiling(i/2)
+#                            tmp <- as.data.frame(results[[x]][['hits']])
+#                            # Convert factor to numeric values so that x-axis is sorted
+#                            tmp$hits <- as.numeric(as.character(tmp$hits))
+#                            a <- ggplot(tmp, aes(hits))
+#                            a <- a + geom_bar(stat = "bin", binwidth = 1) + geom_hline(yintercept=0, colour="white", size=0.5)
+#                            a <- a + labs(title = paste0('Motif', indx, ':', names(results)[x]))
+#
+#                            b <- ggplot(as.data.frame(results[[x]][['profile']]), aes(x=position, y=frequency))
+#                            b <- b + geom_point(aes(colour = cut(position, breaks=c(-Inf,-50,50, Inf)),
+#                                                    alpha = frequency))
+#                            b <- b + guides(colour = FALSE) + theme(legend.position='none')
+#                            p[[i]] <- a
+#                            p[[i+1]] <- b
+#
+#                        }
+#                        # call marrangeGrob instead of grid.arrange so that the plots span
+#                        # multiple pdf pages as in answer in 
+#                        # <http://stackoverflow.com/questions/19059826/multiple-graphs-over-multiple-pages-using-ggplot>
+#                        # top=NULL removes page numbers
+#                        multipage <- do.call(marrangeGrob, c(p, nrow = 3, ncol = 2, top = NULL))
+#                        ggsave(file.path(plot_path, paste0('summary-motif-new', indx, '.pdf')), multipage, width = 8.3, height = 11.7)
+#
+#                        return(results)
+
+    #                    print('in motif')
+    #                    print(indx)
+#                    } else {
+#                        return(c(NA))
+#                    }
+#                          }, pspmDb)
+#
+#    names(pspms) <- paste0('Motif', 1:length(motifs))
+#    return(pspms)# }}}
 }# }}}
 
 # end of fold sections # }}}
@@ -428,10 +500,17 @@ elementMetadata(peaks)$seqs <- seq_general(peaks)
 
 loci <- getLocus(args$peaks)
 seq_motifs(loci, args$npeaks, output_path)
-pspm <- meme(output_path)
-motifs <- map(tomtom, pspm, output_path)
 
-runPeakProfileOnAll(peaks, motifs, output_path)
+if (!exists(file.path(paste0(output_path, '.Rda')))) {
+    pspm <- meme(output_path)
+    motifs <- map(tomtom, pspm, output_path)
+} else {
+    load(file=paste0(output_path, '.Rda'))
+}
+
+#tfs <- runPeakProfileOnAll(peaks, motifs, output_path)
+
+save(pspm, motifs, file=paste0(output_path, '.Rda'))
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function
@@ -443,27 +522,27 @@ runPeakProfileOnAll(peaks, motifs, output_path)
 # writeXStringSet(seqs[names(seqs) %in% names(summits)[index]], file= paste(out, prefix, ".random", n, ".fa", sep=""), "fasta", append=FALSE)
 ## }}}
 
-# ggplot specific# {{{
-require(grid)
-vp.layout <- function(x, y) viewport(layout.pos.row=x, layout.pos.col=y)
-arrange_ggplot2 <- function(..., nrow=NULL, ncol=NULL, as.table=FALSE) {
-    dots <- list(...)
-    n <- length(dots)
-    if(is.null(nrow) & is.null(ncol)) { nrow = floor(n/2) ; ncol = ceiling(n/nrow)}
-    if(is.null(nrow)) { nrow = ceiling(n/ncol)}
-    if(is.null(ncol)) { ncol = ceiling(n/nrow)}
-    ## NOTE see n2mfrow in grDevices for possible alternative
-    grid.newpage()
-    pushViewport(viewport(layout=grid.layout(nrow,ncol) ) )
-    ii.p <- 1
-    for(ii.row in seq(1, nrow)){
-        ii.table.row <- ii.row  
-        if(as.table) {ii.table.row <- nrow - ii.table.row + 1}
-        for(ii.col in seq(1, ncol)){
-            ii.table <- ii.p
-            if(ii.p > n) break
-            print(dots[[ii.table]], vp=vp.layout(ii.table.row, ii.col))
-            ii.p <- ii.p + 1
-        }
-    }
-}# }}}
+## ggplot specific# {{{
+#require(grid)
+#vp.layout <- function(x, y) viewport(layout.pos.row=x, layout.pos.col=y)
+#arrange_ggplot2 <- function(..., nrow=NULL, ncol=NULL, as.table=FALSE) {
+#    dots <- list(...)
+#    n <- length(dots)
+#    if(is.null(nrow) & is.null(ncol)) { nrow = floor(n/2) ; ncol = ceiling(n/nrow)}
+#    if(is.null(nrow)) { nrow = ceiling(n/ncol)}
+#    if(is.null(ncol)) { ncol = ceiling(n/nrow)}
+#    ## NOTE see n2mfrow in grDevices for possible alternative
+#    grid.newpage()
+#    pushViewport(viewport(layout=grid.layout(nrow,ncol) ) )
+#    ii.p <- 1
+#    for(ii.row in seq(1, nrow)){
+#        ii.table.row <- ii.row  
+#        if(as.table) {ii.table.row <- nrow - ii.table.row + 1}
+#        for(ii.col in seq(1, ncol)){
+#            ii.table <- ii.p
+#            if(ii.p > n) break
+#            print(dots[[ii.table]], vp=vp.layout(ii.table.row, ii.col))
+#            ii.p <- ii.p + 1
+#        }
+#    }
+#}# }}}
