@@ -1,26 +1,92 @@
-#!/homes/mxenoph/local/bin/Rscript --vanilla
+#!/usr/bin/env Rscript
 
+# Parsing command line arguments and create output subdirectories# {{{
+library(argparse)
+library(tools)
+source("~/source/Rscripts/annotation-functions.R")
+
+parser <-  ArgumentParser(description="Perform motif analysis")
+parser$add_argument('-f', '--first', metavar= "file", required='True', type= "character", help= "Config file with (system, factor, genotype, condition, replicate-index,file) columns for complex/TF. e.g. chip/config/oct4.conf")
+parser$add_argument('-s', '--second', metavar= "file", required='True', type= "character", help= "Config file with (system, factor, genotype, condition, replicate-index,file) columns for complex/TF. e.g. chip/config/oct4.conf")
+parser$add_argument('-a', '--assembly', type= "character", default='mm9', help= "Give preferred assembly e.g. mm9. Default: mm9")
+parser$add_argument('-l', '--label', type= "character", default=format(Sys.time(), "%d%b%Y"), help= "Give preferred assembly e.g. mm9. Default: mm9")
+parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
+#parser$add_argument('-d', '--dist', type= "integer", default= 50,  help= "Distance around the summit to look for motifs. Default: 50bp")
+
+args <- parser$parse_args()
+output_path <- file.path(args$out, 'targets', args$label)
+plot_path <- file.path(output_path, 'plots')
+dir.create(plot_path, recursive= TRUE)
+
+# function in annotation-functions.R
+annotationInfo(tolower(args$assembly))
+#}}}
+
+# Packages
 library(GenomicRanges)
 library(rtracklayer)
 library(pheatmap)
 library(RColorBrewer)
-source("~/source/Rscripts/annotation-functions.R")
+library(parallel)
 annotationInfo('mm9')
 
-# This assumes it's mouse data. If not this has to be changed
-chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
 
 # get protein coding genes
 genes <- import(genes_gtf, asRangedData=F)
 genes_all <- import(genes_gtf, asRangedData=F)
 genes <- subset(genes, seqnames(genes) %in% chr & source == 'protein_coding')
 
-# slow -- this should be done once only
-#txdb <- makeTranscriptDbFromGFF(gtf, format='gtf')
-#test <- genes(txdb)
+first <- read.table(args$first, header=T, sep="\t")
+second <- read.table(args$second, header=T, sep="\t")
 
-oct4 <- read.table("/nfs/research2/bertone/user/mxenoph/hendrich/chip/files-oct4-peaks.txt", header=F, col.names=c('sample', 'file'))
-mbd3 <- read.table("/nfs/research2/bertone/user/mxenoph/hendrich/chip/files-mbd3-peaks.txt", header=F, col.names=c('sample', 'file'))
+subsetBy <- function(df, column_name){# {{{
+    df[[column_name]] <- df[[column_name]][drop=T]
+    r <- mclapply(levels(df[[column_name]]), function(x) df[df[column_name] == x,])
+    names(r) <- levels(df[[column_name]])
+    return(r)
+}
+
+mclapply(subsetBy(second, 'system'),function(x){
+             mclapply(subsetBy(x, 'genotype'), function(y){
+                      mclapply(subsetBy(y, 'condition'), function (z){
+                               replicates <- subsetBy(z, 'replicates')
+                               mclapply(names(replicates), function(r){
+                                        files <- as.character(replicates[[r]][['file']])
+                                        if(length(files) < 2) import.bed(files)
+                                        if(length(files) > 1) mclapply(files, import.bed)
+})
+})
+         })})# }}}
+
+
+parse_peaks <- function(config){# {{{
+    # This assumes it's mouse data. If not this has to be changed
+    chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
+    
+    y <- mclapply(as.vector(config[,'file']), function(files){
+                  bed <- import.bed(files)
+                  bed <- subset(bed, seqnames(bed) %in% chr)
+             })
+    names(y) <- with(config, paste(system, factor, genotype, condition, rownames(config), sep=':'))
+    
+    descriptors <- unique(gsub(":[0-9]{1,2}$", '', names(y)))
+    pooled <- sapply(descriptors, function(x){
+                     i <- grep(x, names(y))
+                     if(length(i) == 1) {
+                         return(y[[i]])
+                     }else {
+                         gr <- y[i[1]] # Intersecting all the peaks for a condition and factor
+                         for (j in seq(2, length(i), 1)){
+                             gr <- intersect(gr, y[i[j]])
+                         }
+                         return(gr[[1]])
+                     }
+             })
+    return(list(y, pooled))
+}# }}}
+
+x <- parse_peaks(first)
+y <- parse_peaks(second)
 
 oct4_gr <-  mclapply(as.vector(oct4[,2]), function(file){
                      bed <- import.bed(file)
