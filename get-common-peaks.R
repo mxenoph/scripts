@@ -28,9 +28,8 @@ library(rtracklayer)
 library(pheatmap)
 library(RColorBrewer)
 library(parallel)
-annotationInfo('mm9')
 
-
+chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
 # get protein coding genes
 genes <- import(genes_gtf, asRangedData=F)
 genes_all <- import(genes_gtf, asRangedData=F)
@@ -39,25 +38,15 @@ genes <- subset(genes, seqnames(genes) %in% chr & source == 'protein_coding')
 first <- read.table(args$first, header=T, sep="\t")
 second <- read.table(args$second, header=T, sep="\t")
 
-subsetBy <- function(df, column_name){# {{{
-    df[[column_name]] <- df[[column_name]][drop=T]
-    r <- mclapply(levels(df[[column_name]]), function(x) df[df[column_name] == x,])
-    names(r) <- levels(df[[column_name]])
-    return(r)
+name_gr <- function(gr) paste(seqnames(gr), start(gr), end(gr), sep=':')
+get_score <- function(gr) values(gr)[['score']]
+intersect_multi <- function(grl){
+    gr <- grl[[1]]
+    for (j in seq(2, length(grl), 1)){
+        gr <- intersect(gr, grl[[j]])
+    }
+    return(gr)
 }
-
-mclapply(subsetBy(second, 'system'),function(x){
-             mclapply(subsetBy(x, 'genotype'), function(y){
-                      mclapply(subsetBy(y, 'condition'), function (z){
-                               replicates <- subsetBy(z, 'replicates')
-                               mclapply(names(replicates), function(r){
-                                        files <- as.character(replicates[[r]][['file']])
-                                        if(length(files) < 2) import.bed(files)
-                                        if(length(files) > 1) mclapply(files, import.bed)
-})
-})
-         })})# }}}
-
 
 parse_peaks <- function(config){# {{{
     # This assumes it's mouse data. If not this has to be changed
@@ -66,6 +55,8 @@ parse_peaks <- function(config){# {{{
     y <- mclapply(as.vector(config[,'file']), function(files){
                   bed <- import.bed(files)
                   bed <- subset(bed, seqnames(bed) %in% chr)
+                  names(bed) <- name_gr(bed)
+                  return(bed)
              })
     names(y) <- with(config, paste(system, factor, genotype, condition, rownames(config), sep=':'))
     
@@ -73,50 +64,99 @@ parse_peaks <- function(config){# {{{
     pooled <- sapply(descriptors, function(x){
                      i <- grep(x, names(y))
                      if(length(i) == 1) {
-                         return(y[[i]])
+                         # need to reduce it otherwsie when I convert to GRangesList for 
+                         # pooled I get an error. Anyway do not need the score info for the 
+                         # pooled
+                         return(reduce(y[[i]]))
                      }else {
-                         gr <- y[i[1]] # Intersecting all the peaks for a condition and factor
+                         gr <- y[[i[1]]] # Intersecting all the peaks for a condition and factor
                          for (j in seq(2, length(i), 1)){
-                             gr <- intersect(gr, y[i[j]])
+                             gr <- intersect(gr, y[[i[j]]])
                          }
-                         return(gr[[1]])
+                         names(gr) <- name_gr(gr)
+                         return(gr)
                      }
              })
     return(list(y, pooled))
 }# }}}
 
+get_hits_scores <- function(query, subj) {# {{{
+    # returns a vector of length(common) containing index for hits in x
+    ov <- findOverlaps(query, subj, select='first')
+    names(ov) <- names(query)
+    # subset based on those that have a hit
+    ov[!is.na(ov)] <- values(subj[as.numeric(ov[!is.na(ov)])])[['score']]
+    return(ov)
+}# }}}
+
 x <- parse_peaks(first)
+pooled_x <- GRangesList(x[[2]])
 y <- parse_peaks(second)
+pooled_y <- GRangesList(y[[2]])
 
-oct4_gr <-  mclapply(as.vector(oct4[,2]), function(file){
-                     bed <- import.bed(file)
-                     bed <- subset(bed, seqnames(bed) %in% chr)})
-oct4_gr <- GRangesList(oct4_gr)
-names(oct4_gr) <- as.character(oct4[,1])
+x_int <- intersect_multi(pooled_x)
+names(x_int) <- name_gr(x_int)
+y_int <- intersect_multi(pooled_y)
+names(y_int) <- name_gr(y_int)
 
-mbd3_gr <-  mclapply(as.vector(mbd3[,2]), function(file){
-                     bed <- import.bed(file)
-                     bed <- subset(bed, seqnames(bed) %in% chr)})
-mbd3_gr <- GRangesList(mbd3_gr)
-names(mbd3_gr) <- as.character(mbd3[,1])
+x_all <- reduce(unlist(pooled_x))
+names(x_all) <- name_gr(x_all)
+y_all <- reduce(unlist(pooled_y))
+names(y_all) <- name_gr(y_all)
 
-oct4_all <- reduce(unlist(oct4_gr))
-names(oct4_all) <- paste(seqnames(oct4_all), start(oct4_all), end(oct4_all), sep=":")
-mbd3_all <- reduce(unlist(mbd3_gr))
-names(mbd3_all) <- paste(seqnames(mbd3_all), start(mbd3_all), end(mbd3_all), sep=":")
+common <- intersect(x_all, y_all)
+# Remove ranges that are only 10 bp long: 10bp chosen because of TF motifs being 10bp on average
+common <- common[width(common) >= 10]
+names(common) <- name_gr(common)
 
-mat <- matrix(, nrow = length(oct4_all), ncol = length(oct4_gr) + length(mbd3_gr))
-colnames(mat) <- c(names(oct4_gr), names(mbd3_gr))
-rownames(mat) <- names(oct4_all)
+x_scores <- mclapply(pooled_x, function(x) get_hits_scores(common, x))
+y_scores <- mclapply(pooled_y, function(x) get_hits_scores(common, x))
 
-for (x in names(oct4_gr)){
-    # returns true/false list that we convert to integer
-    mat[,x] <- as.integer(overlapsAny(oct4_all, oct4_gr[[x]]))
+mat <- matrix(, nrow= length(common), ncol=length(pooled_x)+length(pooled_y))
+rownames(mat) <- names(common)
+colnames(mat) <- c(names(pooled_x), names(pooled_y))
+
+# Fill the matrix with the scores for the hits
+library(foreach)
+foreach (x=1:ncol(mat)) %do%
+{
+    if (colnames(mat)[x] %in% names(x_scores)) {
+        mat[,x] <- as.integer(x_scores[[colnames(mat)[x]]])
+    } else if (colnames(mat)[x] %in% names(y_scores)) {
+        mat[,x] <- as.integer(y_scores[[colnames(mat)[x]]])
+    }
+    mat[is.na(mat[,x]),x] <- 0
 }
 
-for (x in names(mbd3_gr)){
-    mat[,x] <- as.integer(overlapsAny(oct4_all, mbd3_gr[[x]]))
+# get number of clusters for kmeans 
+# based on http://stackoverflow.com/questions/15376075/cluster-analysis-in-r-determine-the-optimal-number-of-clusters/15376462#15376462
+wss <- (nrow(mat)-1) *sum(apply(mat, 2, var))
+for (i in 2:20) wss[i] <- sum(kmeans(mat, centers=i)$withinss)
+test <- as.big.matrix(mat)
+xdescr <- describe(test)
+worker <- function(i, descr_bm){
+    require(bigmemory)
+    big <- attach.big.matrix(descr_bm)
+    return(colrange(big, cols=i))
 }
+library(snow)
+cl <- makeSOCKcluster(c('localhost', 'localhost'))
+ans <- bigkmeans(test, 20, nstart=30, iter.max=100)
+
+#library(fpc)
+#pamk_best <- pamk(mat)
+#cat("number of clusters estimated by optimum average silhouette width:", pamk_best$nc, "\n")
+pdf('kmeans.pdf')
+plot(1:20, wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
+heatmap(mat,)
+plot(mat, col=ans$cluster)
+
+dev.off()
+#reached memory limit
+mat_apclus <- apcluster(negDistMat(r=2), mat)
+save(mat_apclus, file='mat_apclus.Rdata')
+quit()
+
 oct4_gain <- mat[,'oct4-2i-2lox'] == 0 & mat[,'mbd3-2i'] == 1 & mat[,'mbd3-EpiSCs'] == 0  & mat[,'oct4-EpiLCs'] == 1
 oct4_loss <- mat[,'oct4-2i-2lox'] == 1 & mat[,'mbd3-2i'] == 0 & mat[,'mbd3-EpiSCs'] == 1  & mat[,'oct4-EpiLCs'] == 0
 
