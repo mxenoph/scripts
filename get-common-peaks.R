@@ -27,7 +27,10 @@ library(GenomicRanges)
 library(rtracklayer)
 library(pheatmap)
 library(RColorBrewer)
+library(foreach)
 library(parallel)
+library(bigmemory)
+library(biganalytics)
 
 chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
 # get protein coding genes
@@ -39,55 +42,104 @@ first <- read.table(args$first, header=T, sep="\t")
 second <- read.table(args$second, header=T, sep="\t")
 
 name_gr <- function(gr) paste(seqnames(gr), start(gr), end(gr), sep=':')
-get_score <- function(gr) values(gr)[['score']]
-intersect_multi <- function(grl){
+get_score <- function(gr, value) values(gr)[[value]]
+
+intersect_multi <- function(grl){# {{{
     gr <- grl[[1]]
     for (j in seq(2, length(grl), 1)){
         gr <- intersect(gr, grl[[j]])
+
     }
+    names(gr) <- name_gr(gr)
     return(gr)
-}
+}# }}}
+
+get_hits_scores <- function(query, subj, value) {# {{{
+    # returns a vector of length(common) containing index for hits in x
+    ov <- findOverlaps(query, subj, select='first')
+    names(ov) <- names(query)
+    # subset based on those that have a hit
+    ov[!is.na(ov)] <- values(subj[as.numeric(ov[!is.na(ov)])])[[value]]
+    return(ov)
+}# }}}
 
 parse_peaks <- function(config){# {{{
+    source("~/local/granges.functions.R")
     # This assumes it's mouse data. If not this has to be changed
     chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
     
     y <- mclapply(as.vector(config[,'file']), function(files){
-                  bed <- import.bed(files)
+                  #bed <- import.bed(files)
+                  bed <- macs2GRanges(files)
                   bed <- subset(bed, seqnames(bed) %in% chr)
                   names(bed) <- name_gr(bed)
                   return(bed)
              })
-    names(y) <- with(config, paste(system, factor, genotype, condition, rownames(config), sep=':'))
+    names(y) <- with(config, paste(system, factor, genotype, condition, replicates, rownames(config), sep=':'))
     
     descriptors <- unique(gsub(":[0-9]{1,2}$", '', names(y)))
     pooled <- sapply(descriptors, function(x){
                      i <- grep(x, names(y))
                      if(length(i) == 1) {
-                         # need to reduce it otherwsie when I convert to GRangesList for 
-                         # pooled I get an error. Anyway do not need the score info for the 
-                         # pooled
-                         return(reduce(y[[i]]))
+                         return(y[[i]])
                      }else {
-                         gr <- y[[i[1]]] # Intersecting all the peaks for a condition and factor
-                         for (j in seq(2, length(i), 1)){
-                             gr <- intersect(gr, y[[i[j]]])
-                         }
-                         names(gr) <- name_gr(gr)
+                         gr <- intersect_multi(y[i])
+                         for(j in colnames(values(y[[1]])) ) values(gr)[j] <- rep(NA, length(gr))
+                         
+                         scores <- mclapply(y[i], function(x) get_hits_scores(gr, x, 'FE'))
+                         names(scores) <- names(y[i])
+                         scores <- do.call(cbind.data.frame, scores)
+                         scores[,'mean'] <- apply(scores,1,mean)
+                         values(gr)['score'] <- scores[['mean']]
+                         #apply(scores,1,sd)
                          return(gr)
                      }
              })
     return(list(y, pooled))
 }# }}}
 
-get_hits_scores <- function(query, subj) {# {{{
-    # returns a vector of length(common) containing index for hits in x
-    ov <- findOverlaps(query, subj, select='first')
-    names(ov) <- names(query)
-    # subset based on those that have a hit
-    ov[!is.na(ov)] <- values(subj[as.numeric(ov[!is.na(ov)])])[['score']]
-    return(ov)
-}# }}}
+bigcor <- function(x, nblocks = 10, verbose = TRUE, ...)# {{{
+{
+    library(ff, quietly = TRUE)
+    NCOL <- ncol(x)
+     
+    ## test if ncol(x) %% nblocks gives remainder 0
+    if (NCOL %% nblocks != 0) stop("Choose different 'nblocks' so that ncol(x) %% nblocks = 0!")
+     
+    ## preallocate square matrix of dimension
+    ## ncol(x) in 'ff' single format
+    corMAT <- ff(vmode = "single", dim = c(NCOL, NCOL))
+     
+    ## split column numbers into 'nblocks' groups
+    SPLIT <- split(1:NCOL, rep(1:nblocks, each = NCOL/nblocks))
+     
+    ## create all unique combinations of blocks
+    COMBS <- expand.grid(1:length(SPLIT), 1:length(SPLIT))
+    COMBS <- t(apply(COMBS, 1, sort))
+    COMBS <- unique(COMBS)
+     
+    ## iterate through each block combination, calculate correlation matrix
+    ## between blocks and store them in the preallocated matrix on both
+    ## symmetric sides of the diagonal
+    for (i in 1:nrow(COMBS)) {
+        COMB <- COMBS[i, ]
+        G1 <- SPLIT[[COMB[1]]]
+        G2 <- SPLIT[[COMB[2]]]
+        if (verbose) cat("Block", COMB[1], "with Block", COMB[2], "\n")
+        flush.console()
+        COR <- cor(MAT[, G1], MAT[, G2], ...)
+        corMAT[G1, G2] <- COR
+        corMAT[G2, G1] <- t(COR)
+        COR <- NULL
+    }
+     
+    gc()
+    return(corMAT)
+}
+# }}}
+
+
+
 
 x <- parse_peaks(first)
 pooled_x <- GRangesList(x[[2]])
@@ -109,15 +161,14 @@ common <- intersect(x_all, y_all)
 common <- common[width(common) >= 10]
 names(common) <- name_gr(common)
 
-x_scores <- mclapply(pooled_x, function(x) get_hits_scores(common, x))
-y_scores <- mclapply(pooled_y, function(x) get_hits_scores(common, x))
+x_scores <- mclapply(pooled_x, function(x) get_hits_scores(common, x, 'FE'))
+y_scores <- mclapply(pooled_y, function(x) get_hits_scores(common, x, 'FE'))
 
 mat <- matrix(, nrow= length(common), ncol=length(pooled_x)+length(pooled_y))
 rownames(mat) <- names(common)
 colnames(mat) <- c(names(pooled_x), names(pooled_y))
 
 # Fill the matrix with the scores for the hits
-library(foreach)
 foreach (x=1:ncol(mat)) %do%
 {
     if (colnames(mat)[x] %in% names(x_scores)) {
@@ -131,31 +182,46 @@ foreach (x=1:ncol(mat)) %do%
 # get number of clusters for kmeans 
 # based on http://stackoverflow.com/questions/15376075/cluster-analysis-in-r-determine-the-optimal-number-of-clusters/15376462#15376462
 wss <- (nrow(mat)-1) *sum(apply(mat, 2, var))
-for (i in 2:20) wss[i] <- sum(kmeans(mat, centers=i)$withinss)
-test <- as.big.matrix(mat)
-xdescr <- describe(test)
-worker <- function(i, descr_bm){
-    require(bigmemory)
-    big <- attach.big.matrix(descr_bm)
-    return(colrange(big, cols=i))
-}
-library(snow)
-cl <- makeSOCKcluster(c('localhost', 'localhost'))
-ans <- bigkmeans(test, 20, nstart=30, iter.max=100)
+for (i in 2:50) wss[i] <- sum(kmeans(mat, centers=i)$withinss)
+mat <- as.big.matrix(mat)
+ans <- bigkmeans(mat, 50, nstart=30, iter.max=100)
 
-#library(fpc)
-#pamk_best <- pamk(mat)
-#cat("number of clusters estimated by optimum average silhouette width:", pamk_best$nc, "\n")
-pdf('kmeans.pdf')
-plot(1:20, wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
-heatmap(mat,)
-plot(mat, col=ans$cluster)
+pdf('kmeans.pdf', paper='a4')
+plot(1:length(wss), wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
+cool_cols <- colorRampPalette(c('aliceblue','darkcyan'))(100)
+heat_cols <- colorRampPalette(rev(brewer.pal(9,"RdYlBu")))(255)
+
+
+pdata <- mat
+side_anno <- factor(as.character(ans$cluster))
+#rownames(side_anno) <- colnames(mat)
+levels(side_anno) <- colorRampPalette(rev(brewer.pal(11,"Spectral")))(50)
+
+lmat <- rbind(4:3,2:1)
+lwid <- c(1.5,4)
+lhei <- c(1.5,4)
+
+layout(mat = lmat, widths = lwid, heights = lhei)
+
+heatmap.2(pdata, trace= "none", density.info= "none",
+         col=heat_cols, dendrogram='none', Rowv=F, Colv=F, key=T, symkey=F,
+         margins=c(12,8), srtCol=45, labRow=F, lmat=lmat, lwid=lwid, lhei=lhei)
+
+
+# Performs kmeans clustering and aggregates the rows in each cluster
+pheatmap(mat, #trace= "none", density.info= "none",
+         color=cool_cols, kmeans_k=50,
+         clustering_distance_cols= "binary", clustering_method= "ward",
+         cluster_cols=TRUE, cluster_rows=TRUE,
+         border_color=NA, #annotation_colors= , annotation_legend=F,
+         fontsize=10, fontsize_row=7, show_rownames=FALSE, show_colnames=TRUE)
 
 dev.off()
+
 #reached memory limit
-mat_apclus <- apcluster(negDistMat(r=2), mat)
-save(mat_apclus, file='mat_apclus.Rdata')
-quit()
+#mat_apclus <- apcluster(negDistMat(r=2), mat)
+#save(mat_apclus, file='mat_apclus.Rdata')
+#quit()
 
 oct4_gain <- mat[,'oct4-2i-2lox'] == 0 & mat[,'mbd3-2i'] == 1 & mat[,'mbd3-EpiSCs'] == 0  & mat[,'oct4-EpiLCs'] == 1
 oct4_loss <- mat[,'oct4-2i-2lox'] == 1 & mat[,'mbd3-2i'] == 0 & mat[,'mbd3-EpiSCs'] == 1  & mat[,'oct4-EpiLCs'] == 0
