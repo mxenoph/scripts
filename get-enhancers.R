@@ -1,13 +1,32 @@
-library(GenomicRanges)
-library(GenomicFeatures)
-library(biovizBase)
-library(biomaRt)
-library(ggplot2)
-library(ggbio)
-library(rtracklayer)
+#!/usr/bin/env Rscript
 
+# Parsing command line arguments and create output subdirectories# {{{
+suppressMessages(library(argparse))
+suppressMessages(library(tools))
+source("~/source/Rscripts/annotation-functions.R")
 
-config <- read.table("enhancers.conf.txt", sep=",", header=TRUE, stringsAsFactors=TRUE)
+parser <-  ArgumentParser(description="Define enhancer elements")
+parser$add_argument('-c', '--config', metavar= "file", required='True', type= "character", help= "config file")
+parser$add_argument('-a', '--assembly', type= "character", default='mm9', help= "Give preferred assembly e.g. mm9. Default: mm9")
+parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
+
+args <- parser$parse_args()
+output_path <- file.path(args$out, 'enhancers')
+plot_path <- file.path(output_path, 'plots')
+dir.create(plot_path, recursive= TRUE)
+
+#}}}
+
+# Load packages# {{{
+suppressMessages(library(GenomicRanges))
+suppressMessages(library(GenomicFeatures))
+suppressMessages(library(biovizBase))
+suppressMessages(library(biomaRt))
+suppressMessages(library(ggplot2))
+suppressMessages(library(rtracklayer))# }}}
+source("~/local/functions.R")
+
+config <- read.table(args$config, sep=",", header=TRUE, stringsAsFactors=TRUE)
 
 
 #doesn't seperate based on condition
