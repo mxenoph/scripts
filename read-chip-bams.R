@@ -1,4 +1,4 @@
-#!/homes/mxenoph/local/bin/Rscript --vanilla
+#!/usr/bin/env Rscript
 
 #Turning off warning messages for loading the packages-globally
 options(warn=-1)

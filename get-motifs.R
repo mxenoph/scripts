@@ -29,11 +29,9 @@ memeDatabasePath <- '/nfs/research2/bertone/user/mxenoph/common/meme/motif_datab
 # }}}
 
 # Import libraries & Turn off warning messages for loading the packages-globally# {{{
+suppress <- base::suppressPackageStartupMessages
 options(warn=-1)
-suppressMessages(library(BSgenome))
-# Load BSgenome based on assembly
-suppressMessages(library(paste0("BSgenome.Mmusculus.UCSC.", args$assembly), character.only=TRUE))
-source("~/local/granges.functions.R")
+source("~/source/Rscripts/granges-functions.R")
 #Turn warnings back on
 options(warn=0)
 # }}}
@@ -101,19 +99,29 @@ getLocus <- function(file){
     summits <- summits[order(-values(summits)$score)]
     names(summits) <- paste(seqnames(summits), start(summits), end(summits), sep=":")
 
-    return(summits)
+    names(peaks) <- paste(seqnames(peaks),
+                          start(peaks),
+                          end(peaks),
+                          sep=":")
+#    return(summits)
+    return(list('peaks'= peaks, 'summits'= summits))
 } # }}}
 
 # Get sequences for peaks # {{{
-seq_motifs <- function(summits, n, output_path){
-    seqs <- getSeq(Mmusculus, summits[1:n], as.character=FALSE)
-    # make a dataframe holding information on FE, FDR, sequence
-    names(seqs) <- paste(names(summits)[1:n],
-                            as.vector(values(summits)[['FE']][1:n]),
-                            as.vector(values(summits)[['fdr']][1:n]), sep='|')
+seq_motifs <- function(regions, prefix, output_path, assembly='mm9', report=F){
+    # Load BSgenome based on assembly
+    suppress(library(BSgenome))
+    suppress(library(paste0("BSgenome.Mmusculus.UCSC.", assembly), character.only=TRUE))
 
-    fasta <- file.path(output_path, paste0('top', n, '.fa'))
+    seqs <- getSeq(Mmusculus, regions, as.character=FALSE)
+    # keep information on FE, FDR, sequence
+    names(seqs) <- paste(names(regions),
+                            as.vector(values(regions)[['FE']]),
+                            as.vector(values(regions)[['fdr']]), sep='|')
+
+    fasta <- file.path(output_path, paste0(prefix, '.fa'))
     writeXStringSet(seqs, file= fasta, "fasta", append=FALSE)
+    if (report == TRUE) return(as.character(seqs))
 }# }}}
 
 # Parse motifs and E-values from MEME output. From Konrad Rudolph  # {{{
@@ -275,7 +283,6 @@ seq_general <- function(regions){
 
 # Parse motifs and E-values from MEME formatted databases. Adapted from Konrad Rudolph  # {{{
 parsePspmDb <- function (databasePath) {
-    # from Konrad what the hell is the output?
     # Parse output raw text file and retrieve PSSMs for all motifs.
     # Note: we could also parse the XML file using XPath but the XML output file
     # is quite frankly not very nice. Parsing the raw text is easier. Fail.
@@ -374,23 +381,22 @@ runPeakProfileOnAll <- function(peaks, motifs, output_path){# {{{
     pspmDb <- parsePspmDb(file.path(memeDatabasePath, "JASPAR_CORE_2014_vertebrates.meme"))
     pspmDb <- c(pspmDb, parsePspmDb(file.path(memeDatabasePath, "uniprobe_mouse.meme")))
 
-    print('in runPeakall')
     library(gridExtra)
 
     getResults <- function(peaks, motif_id, db){
-        pspm <- t(db[[x]]$matrix)
+        pspm <- t(db[[motif_id]]$matrix)
         scanned <- scanPeaks(peaks, pspm, "80")
         profile <- getPeakProfile(peaks, pspm, 600)
 
         relative_summit <- peaks$summit - start(peaks)
         positions <- as.integer(scanned[,'start']) - relative_summit
         positions <- positions + ncol(pspm)-1
-
+#
         result <- list(hits = scanned, profile = profile, positions = positions)
         return(result)
     }
 
-    plotResult <- function(results){
+    plotResult <- function(results){# {{{
         p <- vector("list", length(results)*2)
         for (i in seq(1, length(results)*2, 2)) {
             x <- ceiling(i/2)
@@ -416,19 +422,24 @@ runPeakProfileOnAll <- function(peaks, motifs, output_path){# {{{
         multipage <- do.call(marrangeGrob, c(p, nrow = 3, ncol = 2, top = NULL))
         i <- unlist(strsplit(names(results), ":"))[1]
         ggsave(file.path(plot_path, paste0('summary-', i, '.pdf')), multipage, width = 8.3, height = 11.7)
-    }
+    }# }}}
 
     runAllMotifs <- function(motifs, peaks, db){
-        ids <- as.character(unlist(motifs[[indx]]$motif_id))
-        mnames <- motifs[[indx]]$motif_name
+        # Get all Jaspar/Uniprobe IDs matched to each predicted motif
+        results <- mclapply(motifs, function(m){
+                        ids <- as.character(unlist(m[['motif_id']]))
+                        if(any(is.na(ids))){
+                            return()
+                        } else {
+                            results <- mclapply(ids, getResults, peaks=peaks, db=db)
+                            return(results)
+                        }
+                          })
 
-        if (any(is.na(ids)) ) {
-            return()
-        } else {
-            results <- mclapply(ids, getResults, peaks=peaks, db=db)
-            names(results) <- paste(ids, manames, sep=':')
-            mclapply(results, plotResult)
-        }
+        mnames <- mclapply(motifs, function(m)
+                        m[['motif_name']])
+
+
 
     }
 #    pspms <- sapply(1:length(motifs), function(indx, db){# {{{
@@ -492,25 +503,41 @@ runPeakProfileOnAll <- function(peaks, motifs, output_path){# {{{
 
 # end of fold sections # }}}
 
-peaks <- macs2GRanges(args$peaks)
-peaks <- add.seqlengths(peaks, chr_size)
-peaks <- peaks[order(-values(peaks)$score)]
-names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
-elementMetadata(peaks)$seqs <- seq_general(peaks)
+main <- function(){
+    loci <- getLocus(args$peaks)
+    seq_motifs(loci$summits[1:300], paste0(args$mode, args$npeaks), output_path)
+    elementMetadata(loci$peaks)$seqs <- seq_motifs(loci$peaks, paste0('all-peaks'), output_path, report= TRUE)
 
-loci <- getLocus(args$peaks)
-seq_motifs(loci, args$npeaks, output_path)
+    if (!exists(file.path(output_path, paste0(basename(output_path), '.Rda')))) {
+        pspm <- meme(output_path)
+        motifs <- map(tomtom, pspm, output_path)
+    } else {
+        load(file=paste0(output_path, '.Rda'))
+    }
 
-if (!exists(file.path(paste0(output_path, '.Rda')))) {
-    pspm <- meme(output_path)
-    motifs <- map(tomtom, pspm, output_path)
-} else {
-    load(file=paste0(output_path, '.Rda'))
+    save(loci, pspm, motifs, file=paste0(output_path, '.Rda'))
 }
 
+main()
+
+#peaks <- macs2GRanges(args$peaks)
+#peaks <- add.seqlengths(peaks, chr_size)
+#peaks <- peaks[order(-values(peaks)$score)]
+#names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")
+#elementMetadata(peaks)$seqs <- seq_motifs(peaks, paste0('all-peaks'), output_path, report= TRUE)
+##
+#loci <- getLocus(args$peaks)
+#seq_motifs(loci, args$npeaks, output_path)
+#
+#if (!exists(file.path(paste0(output_path, '.Rda')))) {
+#    pspm <- meme(output_path)
+#    motifs <- map(tomtom, pspm, output_path)
+#} else {
+#    load(file=paste0(output_path, '.Rda'))
+#}
+#
 #tfs <- runPeakProfileOnAll(peaks, motifs, output_path)
 
-save(pspm, motifs, file=paste0(output_path, '.Rda'))
 
 # TODO: seq_motifs on random and bottom peaks {{{
 # should be a new separate function

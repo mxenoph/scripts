@@ -1,13 +1,8 @@
-#!/homes/mxenoph/local/bin/Rscript --vanilla
+#!/usr/bin/env Rscript
 
-#Turning off warning messages for loading the packages-globally
-options(warn=-1)
-suppressMessages(require(topGO))
-suppressMessages(require(ggplot2))
-source("~/local/functions.R")
-library("org.Mm.eg.db")
-#Turn warnings back on
-options(warn=0)
+x <- c('topGO', 'ggplot2', 'org.Mm.eg.db')# {{{
+lapply(x, suppressMessages(library), character.only=T)
+source("~/source/Rscripts/functions.R")# }}}
 
 gene_assoc_IDs <- read.table("/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/MM9.maps/mm9.e67.associated.geneIDs.txt", header=TRUE, as.is=TRUE, sep="\t")
 

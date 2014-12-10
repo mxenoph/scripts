@@ -1,4 +1,4 @@
-source("~/local/diff_expression_DESeq.R")
+source("~/source/Rscripts/deseq-functions.R")
 
 #Why not using newCountDataSet-FromHTSeqCount function?
 #This is for differentially expressed introns

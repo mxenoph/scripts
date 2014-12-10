@@ -1,16 +1,11 @@
-#!/homes/mxenoph/local/bin/Rscript --vanilla
+#!/usr/bin/env Rscript
 
-#Turning off warning messages for loading the packages-globally
-options(warn=-1)
-suppressMessages(require(Repitools))
-suppressMessages(require(ChIPpeakAnno))
-suppressMessages(require(org.Mm.eg.db))
-suppressMessages(require(biomaRt))
-suppressMessages(require(rtracklayer))
-source("~/local/granges.functions.R")
-#Turn warnings back on
-options(warn=0)
+# List of packages to load# {{{
+x <- c('Repitools', 'ChIPpeakAnno', 'biomaRt', 'rtracklayer', 'org.Mm.eg.db')
+lapply(x, suppressMessages(library), character.only=T)
+source("~/source/Rscripts/granges-functions.R")# }}}
 
+# Read in arguments -- replace with argsparse# {{{
 if(TRUE){
 args <- commandArgs(trailingOnly=TRUE)
 #This has to be the prefixes before _peaks.xls separated by ; e.g.: 'E12.M2.Epi;E12.Chd4.Epi' always give mbd3 first (bacause of merging after)
@@ -39,8 +34,9 @@ if(grepl('^mm', assembly, ignore.case=TRUE)){
    }
 } else{
    stop("This script currently runs just for mouse data\n")
-}
+}# }}}
 
+# Read in peaks from xls --needs to be updated# {{{
 peaks <- lapply(conf$file, function(f){
                 if(grepl('xls', f)){
                     p <- read.table(f, header=TRUE, sep="\t", stringsAsFactors=FALSE)
@@ -53,9 +49,9 @@ peaks <- lapply(conf$file, function(f){
                 }
                 return(p)
 })
-names(peaks) <- conf$factor
+names(peaks) <- conf$factor# }}}
 
-complex <- findOverlappingPeaks(as(peaks[[2]], "RangedData"), as(peaks[[1]], "RangedData"),
+complex <- findOverlappingPeaks(as(peaks[[2]], "RangedData"), as(peaks[[1]], "RangedData"),# {{{
                                 maxgap=200, select='first',
                                 NameOfPeaks1=names(peaks)[1], NameOfPeaks2=names(peaks)[2],
                                 annotate=1)
@@ -63,7 +59,9 @@ complex <- findOverlappingPeaks(as(peaks[[2]], "RangedData"), as(peaks[[1]], "Ra
 #cause I don't know what it's doing
 #complex.anno <- annotatePeakInBatch(complex$MergedPeaks, AnnotationData=as(my.annotation$genes, "RangedData"))
 export.bed(complex$MergedPeaks, con=paste0(paste(paste(names(peaks), collapse='-'), unique(conf$condition), sep="."), "_cmpl_peaks.bed"))
-stop('Reached end')
+stop('Reached end')# }}}
+
+# complex annotation# {{{
 #this won't do cause if middle of the peak not in promoter range even if peak overlapping promoter I will not get it when I do the screening for peaks overlapping promoters
 #complex.anno <- annotatePeakInBatch(complex$MergedPeaks, AnnotationData=as(my.annotation$genes, "RangedData"), PeakLocForDistance='middle', FeatureForDistance='TSS')
 
@@ -156,4 +154,4 @@ dev.off()
 #firstExons <- lapply(names(exonsPerGene), function(gene){sort(exonsPerGene[[genei]][1])})
 #firstexon<- endoapply(exonsPerGene, function(geneExons){sort(geneExons)[1]})
 #save(firstexon, "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/1stexon/Rdata")
-
+# }}}

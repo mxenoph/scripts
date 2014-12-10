@@ -1,8 +1,9 @@
-#!/homes/mxenoph/local/bin/Rscript --vanilla
+#!/usr/bin/env Rscript
 
-options(warn=-1)
-suppressMessages(require(topGO))
-options(warn=-1)
+source("~/source/Rscripts/functions.R")# {{{
+source("~/source/Rscripts/granges-functions.R")
+x <- c('topGO', 'ggplot2')
+lapply(x, suppressMessages(library), character.only=T)# }}}
 
 args <- commandArgs(trailingOnly=TRUE)
 fpkms <- args[1]

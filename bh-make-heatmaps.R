@@ -1,5 +1,5 @@
-source("~/local/functions.R")
-source("~/local/DEAFunctions.R")
+source("~/source/Rscripts/functions.R")
+source("~/source/Rscripts/deseq-functions.R")
 
 setwd("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/TestMe/")
 

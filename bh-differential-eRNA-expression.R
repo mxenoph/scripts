@@ -1,9 +1,9 @@
-source("~/local/DEAFunctions.R")
-source("~/local/enhancer.functions.R")
-source("~/local/granges.functions.R")
+source("~/source/Rscripts/deseq-functions.R")
+source("~/source/Rscripts/enhancer-functions.R")
+source("~/source/Rscripts/granges-functions.R")
 require('gtools')
 require(GenomicFeatures)
-#### IMPORTANT: To get the enh object
+#### IMPORTANT: To get the enh object -- should be passed as bed file
 load("/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/enhancers.mm9.p300etal.Rdata")
 #For getting the gene coordinates
 load("mm10txdb.Rdata")
@@ -92,7 +92,7 @@ map.up.down <- function(vector){
              names(vector[i]) <- "#3333FF"
           }
        }
-source("~/local/granges.functions.R")
+
 require(gtools)
 require(GenomicFeatures)
 #### IMPORTANT: To get the enh object
@@ -118,9 +118,7 @@ e.FPKMs <- compute.FPKMS(eMatx, w)
 
 
 ##### DE ###
-ource("~/local/DEAFunctions.R")
-source("~/local/enhancer.functions.R")
-source("~/local/granges.functions.R")lus.mat<-eMatx[, c('2lox.plus', '3Flox.plus', '3KO.plus', 'spl2.plus')]
+plus.mat<-eMatx[, c('2lox.plus', '3Flox.plus', '3KO.plus', 'spl2.plus')]
 conds <- c(rep("WT_Epi", 2), rep("KO_Epi", 2))
 
 pcds<-newCountDataSet( plus.mat, conds )

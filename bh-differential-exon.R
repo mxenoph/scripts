@@ -1,4 +1,4 @@
-source("~/local/diff_expression_DESeq.R")
+source("~/source/Rscripts/deseq-functions.R")
 
 #Function to create the cds--calls RunNbinom for further analysis--flag should be "uniform" if design only has samples sequenced with one library preparation type
 MakeCDSnRunTest<-function(design, flag, geneNameFile ){

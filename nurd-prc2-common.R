@@ -1,21 +1,12 @@
-#!/homes/mxenoph/local/bin/Rscript --vanilla
+#!/usr/bin/env Rscript
 
-#Turning off warning messages for loading the packages-globally
-options(warn=-1)
-suppressMessages(require(Repitools))
-suppressMessages(require(GenomicRanges))
-# Required for the import.bed function
-suppressMessages(require(rtracklayer))
-# Required for the rbind.fill function
-suppressMessages(require(plyr))
-suppressMessages(require(ggplot2)); suppressMessages(require(gridExtra))
-suppressMessages(require(reshape))
-suppressMessages(source("~/local/granges.functions.R"))
+source("~/source/Rscripts/functions.R")# {{{
+source("~/source/Rscripts/granges-functions.R")
+x <- c('Repitools', 'GenomicRanges', 'rtracklayer', 'plyr', 'ggplot2', 'gridExtra', 'reshape')
+lapply(x, suppressMessages(library), character.only=T)# }}}
+
 load("/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/mm9.e67.ann.Rdata")
-source("~/local/functions.R")
 gene_assoc_IDs <- read.table("/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/MM9.maps/mm9.e67.associated.geneIDs.txt", header=TRUE, as.is=TRUE, sep="\t")
-#Turn warnings back on
-options(warn=0)
 
 args <- commandArgs(trailingOnly=TRUE)
 peaks_1 <- read.table(args[1], header= TRUE, sep="\t")

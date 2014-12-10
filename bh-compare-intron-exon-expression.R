@@ -1,5 +1,6 @@
-source("/homes/mxenoph/local/functions.R")
-library(ggplot2)
+source("~/source/Rscripts/functions.R")# {{{
+x <- c('ggplot2')
+lapply(x, suppressMessages(library), character.only=T)# }}}
 
 #For matching ensembl ids to gene names later on
 ID2genename<-"/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_10/ensembl_ids_2mgi_symbol"

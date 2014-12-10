@@ -1,44 +1,13 @@
-suppressMessages(require(rtracklayer))
-suppressMessages(require(GenomicRanges))
+#!/usr/bin/env Rscript
 
-
-#Functions
+# List of packages to load# {{{
+x <- c('GenomicRanges', 'rtracklayer')
+lapply(x, suppressMessages(library), character.only=T)
 source("~/local/rangeoverlapper.R")
+source("~/source/Rscripts/plotting-functions.R")
+# }}}
 
-myVenn <- function(length1, length2, cross, catVec){
-   require(RColorBrewer)
-   require(VennDiagram)
-   pal <- brewer.pal(8, "Pastel2")
-   venn.plot <- draw.pairwise.venn(
-                                   area1 = length1,
-                                   area2 = length2,
-                                   cross.area = cross,
-                                   scaled = TRUE,
-                                   category = catVec,
-                                   fill = pal[1:2],
-                                   aplha = 0.5,
-                                   lty = "blank",
-                                   label.col=c("black"),
-                                   cex = 1.5,
-                                   cat.cex = 1.5,
-                                   cat.pos = c(285, 105),
-                                   cat.dist = 0.09,
-                                   cat.just = list(c(-1, -1), c(1, 1)),
-                                   ext.pos = 30,
-                                   ext.dist = -0.05,
-                                   ext.length = 0.85,
-                                   ext.line.lwd = 2,
-                                   ext.line.lty = "dashed"
-                                   );
-    grid.draw(venn.plot);
-}
-
-###
-
-
-
-
-config <- read.table("peaks.conf.txt", sep=",", header=TRUE, stringsAsFactors=TRUE)
+config <- read.table("peaks.conf.txt", sep=",", header=TRUE, stringsAsFactors=TRUE)# {{{
 chrom.length<-"/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/mm9.chrom.sizes"
 #add the add.seqlengths function to a general script for sourcing it quickly
 
@@ -58,9 +27,9 @@ lapply(names(peaks), function(treat){
               abline(h=c(0.5, 1),  col=c("blue","red"), lwd=2, lty="solid")
               })
 })
-dev.off()
+dev.off()# }}}
 
-#pdf("peaksEpiVsESVenn.pdf")
+#pdf("peaksEpiVsESVenn.pdf")# {{{
 #Compare the peaks found in Epi with those in ES
 lapply(seq_along(peaks)[1:length(peaks)-1], function(treat){
        v <- seq(treat+1, length(peaks))
@@ -102,11 +71,11 @@ q
                                    #myol[elementMetadata(myol)[, "OLpercQ"] > 50]
                                    #myol[elementMetadata(myol)[, "OLpercS"] > 50]
 
-                                   myVenn(length(peaks[[treat]][[cond]]), length(peaks[[i]][[matching]]), sum(!is.na(overlaps)), c(label1, label2))
+                                   plot_venn(length(peaks[[treat]][[cond]]), length(peaks[[i]][[matching]]), sum(!is.na(overlaps)), c(label1, label2))
                                    dev.off()
                                  }
                            })
          })
 })
 #dev.off()
-
+# }}}

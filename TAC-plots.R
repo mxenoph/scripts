@@ -103,7 +103,7 @@ plot_fpkm <- function(fpkms, markers, de, name, what='p2'){
 }# }}}
 
 
-source("~/local/functions.R")
+source("~/source/Rscripts/functions.R")
 de <- list('2i'= deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_2ivsKO_2i.txt")$binary,
            'Lif' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_LifvsKO_Lif.txt")$binary,
            'Epi' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_EpivsKO_Epi.txt")$binary)
@@ -311,7 +311,7 @@ dev.off();# }}}
 
 
 #read.table("../chip/config/modifications_update.conf", Header=T, sep="\t")
-source("~/local/granges.functions.R")
+source("~/source/Rscripts/granges-functions.R")
 mbd3 <-import.bed("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.M2.Epi.peaks.bed")
 mbd3_gr <-macs2GRanges("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.M2.Epi_peaks.xls")
 

@@ -45,6 +45,34 @@ select <- dplyr::select
 let <- function (.expr, ...)
     eval(substitute(.expr), list2env(list(...), parent = parent.frame()))
 
+# Write GTF file# {{{
+writeGtf <- function (gr, gtf, feature) {
+    lines <- sprintf  ("%s\t%s\t%s\t%d\t%d\t%s\t%s",
+                       seqnames(gr),
+                       sources,
+                       feature,
+                       start(gr),
+                       end(gr),
+                       strand,
+                       frame,
+                       attribute,
+                       )
+    strands <- as.character (strand (gr))
+    strands[strands=='*'] <- '.'
+    write.data <- sprintf ("%s\t%s\t.", write.data, strands)
+      if(feature %in% c("exon", "intron", "gene")){
+               groups <- sprintf ("gene_id \"%s\"; transcript_id \"%s\"; gene_name \"%s\";",
+                                                       elementMetadata (gr)$Gene, elementMetadata (gr)$Symbol, elementMetadata (gr)$Gene)
+      }
+      else{
+               groups <- sprintf ("%s_id \"%s\"; spanning.exons \"%s\"; spanning.introns \"%s\"; spanning.intergenic \"%s\"; spanning.intergenic.both.strands \"%s\";",
+                                                       feature, names(gr), elementMetadata (gr)$spanning.exons, elementMetadata (gr)$spanning.introns, elementMetadata (gr)$spanning.intergenic, elementMetadata (gr)$spanning.intergenic.both.strands)
+        }
+        write.data <- sprintf ("%s\t%s", write.data, groups)
+
+        writeLines (write.data,gtf)
+}# }}}
+
 parseBedtools <- function(annotated){# {{{
 
     # Keep only gene name from attribute field
@@ -82,15 +110,31 @@ parseBedtools <- function(annotated){# {{{
                            gene_name = gene_name,
                            # Mark as targets genes that are 2Kb upstream the features start and 1Kb downstream
                            target = ifelse(closest_distance >= -2000 & closest_distance <= 1000, 1, 0),
-                           tss = ifelse(gtf_strand == '+', gtf_start, gtf_end))
-                    
-    readout_df <- tbl_df(adply(readout_df, 1, transform, dtts = min(abs(c(bed_start, bed_end)-tss))))
+                           tss = ifelse(gtf_strand == '+', gtf_start, gtf_end),
+                           tts = ifelse(gtf_strand == '-', gtf_start, gtf_end))
+    
+    # Distance to tss of the closest gene
+    readout_df$dtss = sapply(1:nrow(readout_df), function(i) min(abs(c(readout_df$bed_start[[i]], readout_df$bed_end[[i]]) - readout_df$tss[[i]])))
+    # Distance to the tts of the closest gene
+    readout_df$dtts = sapply(1:nrow(readout_df), function(i) min(abs(c(readout_df$bed_start[[i]], readout_df$bed_end[[i]]) - readout_df$tts[[i]])))
+
+    duplicates <- as.character(readout_df[duplicated(readout_df['bed_name']), 'bed_name'])
+    redundant <- readout_df[readout_df$bed_name %in% duplicates,]
+
+    sapply(seq(1, 10, 2), function(indx, df){
+           if(df[indx, 'target'] == df[indx +1, 'target']) {
+               if(df[indx, 'dtss'] < df[indx +1, 'dtss']) flag <- indx
+               else if (df[indx, 'dtss'] < df[indx +1, 'dtss']) print('tie')
+               else flag <- indx + 1
+           } else {
+               primary
+           }
+                           }, redundant)
 
     readout_df %>%
     group_by(bed_name) %>%
-    select(bed_start, bed_end, gene, gtf_start, gtf_end, gtf_strand, closest_distance, tss, test)
-
-
+    select(bed_chr, bed_start, bed_end, gene, gtf_start, gtf_end, gtf_strand, closest_distance, target, dtss, dtts) %>%
+    filter(row_number(dtts))
 
 }# }}}
 

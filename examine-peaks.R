@@ -1,14 +1,8 @@
-require(biomaRt)
-require(gridExtra)
-require(GenomicRanges)
-require(ggplot2)
-require(plyr)
-require(gridExtra)
-require(gsubfn) #for selecting substrings in perl-like way
-require(VennDiagram)
-require(Vennerable)
+source("~/source/Rscripts/functions.R")# {{{
+#for selecting substrings in perl-like way
+x <- c('biomaRt', 'gridExtra', 'GenomicRanges', 'ggplot2', 'plyr', 'gsubfn', 'Vennerable', 'VennDiagram')
+lapply(x, suppressMessages(library), character.only=T)# }}}
 
-source("~/local/functions.R")
 load("/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/hendrichChIP/macs/mm9.e67.ann.Rdata")
 setwd("/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/hendrichChIP/macs")
 
@@ -127,7 +121,7 @@ gg_color_hue <- function(n) {
 my.venn <- function(areas, intersections, cust.lab, title){
    require(VennDiagram)
    require(RColorBrewer)
-   draw.triple.venn.custom <- dget("/homes/mxenoph/local/draw.triple.venn.custom.R")
+   draw.triple.venn.custom <- dget("/homes/mxenoph/source/Rscripts/draw-3venn-custom-function.R")
    col<-brewer.pal(length(areas), 'Set1')
 
    venn <- draw.triple.venn.custom(

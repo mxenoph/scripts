@@ -1,6 +1,6 @@
-source("~/local/functions.R")
-library("org.Mm.eg.db")
-
+source("~/source/Rscripts/functions.R")
+x <- c('org.Mm.db')
+lapply(x, suppressMessages(library), character.only=T)
 
 dir <- "/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal"
 
