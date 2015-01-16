@@ -17,6 +17,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-i', '--ip', nargs='+', metavar="file", type=str, required=True, help= 'One or more treated(IP) bam files')
 parser.add_argument('-c', '--ctrl', nargs='+', metavar="file", type=str, required=True, help= 'Control bam files')
+parser.add_argument('-a', '--assembly', type=str, default='mm9', help= 'Assembly for the ensembl annotation. Default = mm9')
 parser.add_argument('-f', '--gtf', metavar="file", type=str, required=False, help= 'Alternative feature gtf')
 parser.add_argument('-o', '--out_dir', metavar="path", type=str, required=True)
 
@@ -45,14 +46,15 @@ for i in args.ip:
 # Functions# {{{
 
 # Create arrays in parallel, and save to disk for later
-def calc_signal ( ip, ctrl, anchor, basename ):# {{{
+def calc_signal ( ip, ctrl, anchor, basename, replicates =False ):# {{{
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
     from metaseq import persistence
     import multiprocessing
     processes = multiprocessing.cpu_count()
     
     out = basename + '.npz'
-    if not os.path.exists(out):
+    # Run if file does not exist and experiment has no replicates
+    if not os.path.exists(out) & (not replicates):
         # Create arrays in parallel
         ip_array = ip_signal.array(anchor, bins=100, processes=processes)
         input_array = input_signal.array(anchor, bins=100, processes=processes)
@@ -70,6 +72,15 @@ def calc_signal ( ip, ctrl, anchor, basename ):# {{{
                 overwrite=True)
     return;# }}}
 
+def get_N_HexCol(N=15):# {{{
+    import colorsys
+    HSV_tuples = [(x*1.0/N, 0.5, 0.5) for x in xrange(N)]
+    hex_out = []
+    for rgb in HSV_tuples:
+        rgb = map(lambda x: int(x*255),colorsys.hsv_to_rgb(*rgb))
+        hex_out.append('#' + "".join(map(lambda x: chr(x).encode('hex'),rgb)))
+    return hex_out# }}}
+
 def plot_norm_signals (norm_sub):# {{{
     # Create a meaningful x-axis
     import numpy as np
@@ -79,27 +90,34 @@ def plot_norm_signals (norm_sub):# {{{
     from matplotlib import pyplot as plt
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    colors = ['b', 'g', 'r', 'c', 'k']
+#    colors = ['b', 'g', 'r', 'c', 'k', 'm']
+    colors = get_N_HexCol(12)
     
     for key in norm_sub.keys():
         ax.plot(x, norm_sub.get(key).mean(axis=0), color=colors[norm_sub.keys().index(key)], label=key)
     
     # Add a vertical line at the TSS
     ax.axvline(0, linestyle=':', color='k')
-    ax.axvline(120, linestyle=':', color='r')
-    ax.axvline(-90, linestyle=':', color='b')
-    ax.axvline(250, linestyle=':', color='c')
+    ax.axvline(75, linestyle=':', color='c')
+    ax.axvline(150, linestyle=':', color='r')
+    ax.axvline(-75, linestyle=':', color='c')
+    ax.axvline(-150, linestyle=':', color='r')
     
     # Add labels and legend
     ax.set_xlabel('Distance from TSS (bp)')
     ax.set_ylabel('Normalised average read coverage (per million mapped reads)')
-    ax.legend(loc='best');
+    ax.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
 
     return fig;# }}}
 # }}}
 
 # Create database from ensembl GTF if it does not already exist# {{{
-gff_filename = '/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/MM9.maps/Mus_musculus.NCBIM37.67_conv.gtf'
+import pandas as df
+annotation_info = df.read_csv('/nfs/research2/bertone/user/mxenoph/genome_dir/assemblies-annotations.config', sep="\t")
+# Otherwise pandas subsetting returns a series (despite only one string there) instead of a single string
+gff_filename = annotation_info.loc[annotation_info.assembly == args.assembly].annotation.iloc[0]
+
+#gff_filename = '/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/MM9.maps/Mus_musculus.NCBIM37.67_conv.gtf'
 db_filename = gff_filename + '.db'
 
 if not os.path.exists(db_filename):
@@ -150,9 +168,14 @@ for i in range(len(args.ip)):
 
     calc_signal(ip_signal, input_signal, tsses, base)
 
-    if alternative_features:
+    try:
+        alternative_features
+    except:
+        print "Only computing enrichment around the TSS."
+    else:
         calc_signal(ip_signal, input_signal, alternative_features, base + '.mb3_peak')
-    
+
+
     # Load the windows and arrays
     from metaseq import persistence
     features, arrays = persistence.load_features_and_arrays(prefix=base)
