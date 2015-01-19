@@ -37,7 +37,7 @@ get_position <- function(x, y){ # {{{
         position <- start(y) - start(x)
     } else {
         # e.g. with x=tss=10, "-" directionality and summits 4 and 17
-        # the positions will be 6 and -7
+        # the positions will be 6 and -
         position <- start(x) - start(y)
     }
     return(position)
@@ -51,11 +51,11 @@ plot_scatter <- function(plot_data, label) {# {{{
     p <- p + geom_rug()
     p <- p + ggtitle(label)
     p <- p + annotate("text", y= max(plot_data$fe), x =1000,
-                   # paste0 will not work cause it's not a plotmath function
-                   label= paste("n[in_window]", "==", nrow(plot_data)),
-                   parse = TRUE,
-                   col = "red",
-                   hjust=1)
+                      # paste0 will not work cause it's not a plotmath function
+                      label= paste("n[in_window]", "==", nrow(plot_data)),
+                      parse = TRUE,
+                      col = "red",
+                      hjust=1)
     print(p)
 }
 # }}}
@@ -65,15 +65,15 @@ plot_scatter <- function(plot_data, label) {# {{{
 main <- function(){ #{{{
     # Preparing the data
     # Select the _peaks.xls files in the path and not the negative_peaks.xls
-    peaks <- lapply(list.files(pattern=".*[^e]_peaks.xls", path = args$path, full.name = T), macs2GRanges)
+    peaks <- lapply(list.files(pattern=".*[^e]_peaks.xls", path = args$path, full.name = T), macs_to_granges)
     names(peaks) <- list.files(pattern=".*[^e]_peaks.xls", path = args$path, full.name = T)
 
     summits <- mclapply(peaks, function(gr){# {{{
-             gr <- GRanges(seqnames(gr),
-                       IRanges(start = values(gr)[['summit']], end = values(gr)[['summit']]),
-                       strand = "*",
-                       fe = values(gr)[['FE']])
-    })# }}}
+                        gr <- GRanges(seqnames(gr),
+                                      IRanges(start = values(gr)[['summit']], end = values(gr)[['summit']]),
+                                      strand = "*",
+                                      fe = values(gr)[['FE']])
+                  })# }}}
 
     print('step 1')
     # ranges of width 2Kb with center being the TSS
@@ -85,39 +85,37 @@ main <- function(){ #{{{
 
     # Calculate position of summit relative to tss and keep fe for peak# {{{
     positions <- mclapply(summits, function(summit) {
-             ov <- findOverlaps(tss_window, summit)
-
-             pos <- mclapply(1:length(ov), function(x, query, subj){
-                                   pair <- ov[x]
-                                   p <- get_position(query[queryHits(pair)], subj[subjectHits(pair)])
-                                   d <- data.frame(summit = p, fe = values(subj[subjectHits(pair)])[['fe']])
-                                   return(d)
-                           }, tss, summit)
-
-             pos <- do.call(rbind, pos)
-             return(pos)
-    })# }}}
-    
+                          ov <- findOverlaps(tss_window, summit)
+                          
+                          pos <- mclapply(1:length(ov), function(x, query, subj){
+                                          pair <- ov[x]
+                                          p <- get_position(query[queryHits(pair)], subj[subjectHits(pair)])
+                                          d <- data.frame(summit = p, fe = values(subj[subjectHits(pair)])[['fe']])
+                                          return(d)
+                                      }, tss, summit)
+                          pos <- do.call(rbind, pos)
+                          return(pos)
+                  })# }}}
+            
     print('step 2')
     pdf(file.path(plot_path, 'peak-summitsVsTSS.pdf'))
     for(x in 1:length(positions)) {
         plot_scatter(positions[[x]], basename(names(positions)[x]))
     }
     dev.off()
-
     save(peaks, tss_window, positions, 
          file = file.path(output_path, "compare-summits-tss.Rda"))
 } # }}}
 
 # Printing
 if( !file.exists(file.path(output_path, 'compare-summits-tss.Rda')) ) {
-    main()
+        main()
 } else {
     load(file.path(output_path, 'compare-summits-tss.Rda'))
 
     pdf(file.path(plot_path, 'peak-summitsVsTSS.pdf'))
-    for(x in 1:length(positions)) {
-        plot_scatter(positions[[x]], basename(names(positions)[x]))
-    }
-    dev.off()
+        for(x in 1:length(positions)) {
+            plot_scatter(positions[[x]], basename(names(positions)[x]))
+        }
+        dev.off()
 }
