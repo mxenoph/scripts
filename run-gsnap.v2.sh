@@ -102,4 +102,5 @@ OPT="$OPT -n 10 -Q -O --nofails -A sam --split-output=$output --gunzip --quality
 
 gsnap=/homes/kostadim/myrto/software/external/gmap-current/bin/gsnap
 # Run gsnap
-$gsnap $OPT ${fastq[*]}
+#$gsnap $OPT ${fastq[*]}
+echo $OPT

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 # ---------------------------------------------------------
 # Get TSS +/- 1kb for all annotated transcripts.
@@ -17,6 +17,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-i', '--ip', nargs='+', metavar="file", type=str, required=True, help= 'One or more treated(IP) bam files')
 parser.add_argument('-c', '--ctrl', metavar="file", type=str, required=True, help= 'Control bam file')
+parser.add_argument('-a', '--assembly', type=str, default='mm9', help= 'Assembly for the ensembl annotation. Default = mm9')
 parser.add_argument('-e', '--expr', metavar="file", type=str, required=False, help= 'Deseq output file')
 parser.add_argument('-o', '--out_dir', metavar="path", type=str, required=True)
 
@@ -40,8 +41,9 @@ for i in args.ip:
     basename.append(base)#}}}
 
 # Functions# {{{
+
 # Create arrays in parallel, and save to disk for later
-def calc_signal ( ip, ctrl, anchor, basename ):
+def calc_signal ( ip, ctrl, anchor, basename ):# {{{
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
     from metaseq import persistence
     import multiprocessing
@@ -64,9 +66,9 @@ def calc_signal ( ip, ctrl, anchor, basename ):
                 prefix=basename,
                 link_features=True,
                 overwrite=True)
-    return;
+    return;# }}}
 
-def plot_signals (arrays, base):
+def plot_signals (arrays, base):# {{{
     # Create a meaningful x-axis
     import numpy as np
     x = np.linspace(-1000, 1000, 100)
@@ -86,9 +88,9 @@ def plot_signals (arrays, base):
     ax.set_ylabel('Average read coverage (per million mapped reads)')
     ax.legend(loc='best');
 
-    return fig;
+    return fig;# }}}
 
-def heatmap_signal_norm (normalized_subtracted):
+def heatmap_signal_norm (normalized_subtracted):# {{{
     # Create a meaningful x-axis
     import numpy as np
     x = np.linspace(-1000, 1000, 100)
@@ -118,10 +120,165 @@ def heatmap_signal_norm (normalized_subtracted):
     fig.array_axes.axvline(0, linestyle=':', color='k')
     fig.line_axes.axvline(0, linestyle=':', color='k')
 
+    return fig;# }}}
+
+def signal_expr(normalized_subtracted, expr):# {{{
+    import numpy as np
+    x = np.linspace(-1000, 1000, 100)
+    from matplotlib import pyplot as plt
+
+    fig = plt.figure(figsize=(6,6))
+
+    de_axes = fig.add_subplot(321)# {{{
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05)).values, :],
+            line_kwargs=dict(color='#fe9829', label='up'),
+            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+            ax=de_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05)).values, :],
+            line_kwargs=dict(color='#8e3104', label='down'),
+            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+            ax=de_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.padj > 0.05)).values, :],
+            line_kwargs=dict(color='.5', label='unchanged'),
+            fill_kwargs=dict(color='.5', alpha=0.3),
+            ax=de_axes)# }}}
+
+    robust_expression_axes = fig.add_subplot(323)# {{{
+    metaseq.plotutils.ci_plot(
+            x,
+            #normalized_subtracted[((expr.padj <= 0.05)  & (expr.wt_fpkm >= 10)).values, :],
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange > 0) & (expr.wt_fpkm >= 10)).values, :],
+            line_kwargs=dict(color='#fe9829', label='robustly expressed - up'),
+            #line_kwargs=dict(color='#fe9829', label='robustly expressed'),
+            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+            ax=robust_expression_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            #normalized_subtracted[((expr.padj <= 0.05) & (expr.wt_fpkm < 10) & (expr.wt_fpkm >=1)).values, :],
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange < 0) & (expr.wt_fpkm >= 10)).values, :],
+            #line_kwargs=dict(color='#8e3104', label='expressed'),
+            line_kwargs=dict(color='#8e3104', label='robustly expressed - down'),
+            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+            ax=robust_expression_axes)# }}}
+
+    expression_axes = fig.add_subplot(325)# {{{
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange > 0) & (expr.wt_fpkm < 10) & (expr.wt_fpkm >=1)).values, :],
+            #normalized_subtracted[((expr.padj > 0.05) & (expr.wt_fpkm < 1)).values, :],
+            #line_kwargs=dict(color='.5', label='not expressed'),
+            line_kwargs=dict(color='#fe9829', label='expressed - up'),
+            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+            ax=expression_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange < 0) & (expr.wt_fpkm < 10) & (expr.wt_fpkm >=1)).values, :],
+            #normalized_subtracted[((expr.padj > 0.05) & (expr.wt_fpkm < 1)).values, :],
+            #line_kwargs=dict(color='.5', label='not expressed'),
+            line_kwargs=dict(color='#8e3104', label='expressed - down'),
+            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+            ax=expression_axes)# }}}
+
+    de_bound_axes = fig.add_subplot(322)# {{{
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05) & (expr.boolean == 1)).values, :],
+            line_kwargs=dict(color='#fe9829', label='up'),
+            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+            ax=de_bound_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05) & (expr.boolean == 1)).values, :],
+            line_kwargs=dict(color='#8e3104', label='down'),
+            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+            ax=de_bound_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.padj > 0.05) & (expr.boolean == 1)).values, :],
+            line_kwargs=dict(color='.5', label='unchanged'),
+            fill_kwargs=dict(color='.5', alpha=0.3),
+            ax=de_bound_axes)# }}}
+
+    robust_expression_bound_axes = fig.add_subplot(324)# {{{
+    metaseq.plotutils.ci_plot(
+            x,
+            #normalized_subtracted[((expr.padj <= 0.05)  & (expr.wt_fpkm >= 10)).values, :],
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange > 0) & (expr.wt_fpkm >= 10) & (expr.boolean ==1)).values, :],
+            line_kwargs=dict(color='#fe9829', label='robustly expressed - up'),
+            #line_kwargs=dict(color='#fe9829', label='robustly expressed'),
+            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+            ax=robust_expression_bound_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            #normalized_subtracted[((expr.padj <= 0.05) & (expr.wt_fpkm < 10) & (expr.wt_fpkm >=1)).values, :],
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange < 0) & (expr.wt_fpkm >= 10)  & (expr.boolean ==1)).values, :],
+            #line_kwargs=dict(color='#8e3104', label='expressed'),
+            line_kwargs=dict(color='#8e3104', label='robustly expressed - down'),
+            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+            ax=robust_expression_bound_axes)# }}}
+
+    expression_bound_axes = fig.add_subplot(326)# {{{
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange > 0) & (expr.wt_fpkm < 10) & (expr.wt_fpkm >=1)  & (expr.boolean ==1)).values, :],
+            #normalized_subtracted[((expr.padj > 0.05) & (expr.wt_fpkm < 1)).values, :],
+            #line_kwargs=dict(color='.5', label='not expressed'),
+            line_kwargs=dict(color='#fe9829', label='expressed - up'),
+            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+            ax=expression_bound_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.padj <= 0.05) & (expr.log2FoldChange < 0) & (expr.wt_fpkm < 10) & (expr.wt_fpkm >=1)  & (expr.boolean ==1)).values, :],
+            #normalized_subtracted[((expr.padj > 0.05) & (expr.wt_fpkm < 1)).values, :],
+            #line_kwargs=dict(color='.5', label='not expressed'),
+            line_kwargs=dict(color='#8e3104', label='expressed - down'),
+            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+            ax=expression_bound_axes)# }}}
+
+    # Clean up redundant x tick labels, and add axes labels
+    de_axes.set_ylabel('Average\nenrichment')
+    de_axes.set_title('Differentially expressed')
+    robust_expression_axes.set_ylabel('Average\nenrichment')
+    robust_expression_axes.set_title('Differentially expressed')
+    expression_axes.set_ylabel('Average\nenrichment')
+    expression_axes.set_title('Differentially expressed')
+
+    de_bound_axes.set_title('NuRD bound')
+    de_bound_axes.set_ylabel('Average\nenrichment')
+    de_bound_axes.set_xlim([-1000, 1000])
+    robust_expression_bound_axes.set_ylabel('Average\nenrichment')
+    robust_expression_bound_axes.set_title('NuRD bound')
+    robust_expression_bound_axes.set_xlim([-1000, 1000])
+    expression_bound_axes.set_ylabel('Average\nenrichment')
+    expression_bound_axes.set_title('NuRD bound')
+    expression_bound_axes.set_xlim([-1000, 1000])
+    
+    # Add the vertical lines for TSS position to all axes
+    for ax in [de_axes, robust_expression_axes, expression_axes, de_bound_axes, robust_expression_bound_axes, expression_bound_axes]:
+        ax.axvline(0, linestyle=':', color='k')
+
+        # Nice legend
+        de_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        robust_expression_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        expression_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        de_bound_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        robust_expression_bound_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        expression_bound_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+
+#        fig.subplots_adjust(left=0.3, right=0.8, bottom=0.05)
+    fig.tight_layout()
     return fig;
 
+# }}}
+
 #def heatmap_signal_expr (normalized_subtracted, expr):
-def heatmap_signal_expr (normalized_subtracted, expr, fc_order):
+def heatmap_signal_expr (normalized_subtracted, expr, fc_order):# {{{
     # Create a meaningful x-axis
     import numpy as np
     x = np.linspace(-1000, 1000, 100)
@@ -135,59 +292,66 @@ def heatmap_signal_expr (normalized_subtracted, expr, fc_order):
             fill_kwargs=dict(color='k', alpha=0.3),
             #sort_by=normalized_subtracted.mean(axis=1),
             # Additionally specify height_ratios:
-            height_ratios=(3, 1, 1)
+            height_ratios=(3, 1, 1, 1)
             )
     
     # `fig.gs` contains the `matplotlib.gridspec.GridSpec` object,
     # so we can now create the new axes.
-    bottom_axes = plt.subplot(fig.gs[2, 0])
+    de_axes = plt.subplot(fig.gs[2, 0])
 
-    # Signal over TSSs of transcripts that were activated upon knockdown.
+    # Signal over TSSs of transcripts that were de upon knockdown
     metaseq.plotutils.ci_plot(
             x,
-            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.01)).values, :],
+            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05)).values, :],
             line_kwargs=dict(color='#fe9829', label='up'),
             fill_kwargs=dict(color='#fe9829', alpha=0.3),
-            ax=bottom_axes)
+            ax=de_axes)
     # Signal over TSSs of transcripts that were repressed upon knockdown
     metaseq.plotutils.ci_plot(
             x,
-            normalized_subtracted[((expr.log2FoldChange < -1) & (expr.padj <= 0.01)).values, :],
+            #normalized_subtracted[((expr.log2FoldChange < -1) & (expr.padj <= 0.05)).values, :],
+            normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05)).values, :],
             line_kwargs=dict(color='#8e3104', label='down'),
             fill_kwargs=dict(color='#8e3104', alpha=0.3),
-            ax=bottom_axes)
+            ax=de_axes)
 
-    # Signal over TSSs tof transcripts that did not change upon knockdown
+    # Signal over TSSs of transcripts that did not change upon knockdown
     metaseq.plotutils.ci_plot(
             x,
-            normalized_subtracted[((expr.padj > 0.01)).values, :],
+            normalized_subtracted[((expr.padj > 0.05)).values, :],
             line_kwargs=dict(color='.5', label='unchanged'),
             fill_kwargs=dict(color='.5', alpha=0.3),
-            ax=bottom_axes)
-    
+            ax=de_axes)
+
     # Clean up redundant x tick labels, and add axes labels
     fig.line_axes.set_xticklabels([])
     fig.array_axes.set_xticklabels([])
     fig.line_axes.set_ylabel('Average\nenrichement')
     fig.array_axes.set_ylabel('Genes')
-    bottom_axes.set_ylabel('Average\nenrichment')
-    bottom_axes.set_xlabel('Distance from TSS (bp)')
+    de_axes.set_ylabel('Average\nenrichment')
+    de_axes.set_xlabel('Distance from TSS (bp)')
     fig.cax.set_ylabel('Enrichment')
     
     # Add the vertical lines for TSS position to all axes
-    for ax in [fig.line_axes, fig.array_axes, bottom_axes]:
+    for ax in [fig.line_axes, fig.array_axes, de_axes]:
         ax.axvline(0, linestyle=':', color='k')
 
         # Nice legend
-        bottom_axes.legend(loc='best', frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        de_axes.legend(loc='best', frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
         fig.subplots_adjust(left=0.3, right=0.8, bottom=0.05)
 
     return fig;
 
 # }}}
+# }}}
 
 # Create database from ensembl GTF if it does not already exist# {{{
-gff_filename = '/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/MM9.maps/Mus_musculus.NCBIM37.67_conv.gtf'
+import pandas as df
+annotation_info = df.read_csv('/nfs/research2/bertone/user/mxenoph/genome_dir/assemblies-annotations.config', sep="\t")
+# Otherwise pandas subsetting returns a series (despite only one string there) instead of a single string
+gff_filename = annotation_info.loc[annotation_info.assembly == args.assembly].annotation.iloc[0]
+
+#gff_filename = '/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/MM9.maps/Mus_musculus.NCBIM37.67_conv.gtf'
 db_filename = gff_filename + '.db'
 
 if not os.path.exists(db_filename):
@@ -257,8 +421,10 @@ for i in args.ip:
         up = test.upregulated(thresh=0.05, idx=True, col='padj').ravel().nonzero()[0]
         down = test.downregulated(thresh=0.05, idx=True, col='padj').ravel().nonzero()[0]
         unch = test.unchanged(thresh=0.05, idx=True, col='padj').ravel().nonzero()[0]
+        #active_up = test.transcribed_upregulated(thresh=0.05, idx=True, col='padj').ravel().nonzero()[0]
         import numpy as np
         fc_order = np.concatenate([up, unch , down])
         pp.savefig(heatmap_signal_expr(normalized_subtracted, expr, fc_order))
+        pp.savefig(signal_expr(normalized_subtracted, expr))
 
 pp.close()# }}}

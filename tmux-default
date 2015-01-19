@@ -9,7 +9,7 @@ if [ $? != 0 ]
     tmux new-window -t $SESSION:2 -n "wdr"
     tmux send-keys -t $SESSION:2 'cd /nfs/research2/bertone/user/mxenoph/hendrich; clear' C-m
     tmux new-window -t $SESSION:3 -n "nobackup"
-    tmux send-keys -t $SESSION:3 'cd /nfs/nobackup2/research/bertone/mxenoph/bh/; clear' C-m
+    tmux send-keys -t $SESSION:3 'cd /gpfs/nobackup/bertone/user/mxenoph/; clear' C-m
     tmux new-window -t $SESSION:4 -n "vim"
     tmux send-keys -t $SESSION:4 vim C-m
 fi

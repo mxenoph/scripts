@@ -18,7 +18,7 @@ plot_path <- file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 
 # function in annotation-functions.R
-annotationInfo(tolower(args$assembly))
+get_annotation(tolower(args$assembly))
 #}}}
 
 # Packages# {{{
@@ -53,7 +53,7 @@ parse_peaks <- function(config){# {{{
     
     y <- mclapply(as.vector(config[,'file']), function(files){
                   #bed <- import.bed(files)
-                  bed <- macs2GRanges(files)
+                  bed <- macs_to_granges(files)
                   bed <- subset(bed, seqnames(bed) %in% chr)
                   names(bed) <- name_gr(bed)
                   return(bed)

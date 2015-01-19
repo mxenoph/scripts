@@ -9,7 +9,7 @@ load("/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/mm9.e67.ann.Rd
 gene_assoc_IDs <- read.table("/nfs/research2/bertone/user/mxenoph/genome_dir/M_musculus_9/MM9.maps/mm9.e67.associated.geneIDs.txt", header=TRUE, as.is=TRUE, sep="\t")
 
 args <- commandArgs(trailingOnly=TRUE)
-peaks <- macs2GRanges(args[1])
+peaks <- macs_to_granges(args[1])
 expr <- deseq2vect(args[2])
 # User defined subset list i.e. ChEA/M2-Chd4.Epi.SUZ12_CommonTargets.txt
 subsUL <- read.table(args[3], as.is=T, sep="\t")[[1]]

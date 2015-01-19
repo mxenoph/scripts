@@ -40,7 +40,7 @@ if(grepl('^mm', assembly, ignore.case=TRUE)){
 peaks <- lapply(conf$file, function(f){
                 if(grepl('xls', f)){
                     p <- read.table(f, header=TRUE, sep="\t", stringsAsFactors=FALSE)
-                    p <- macs2GRanges(p)
+                    p <- macs_to_granges(p)
                     p <- p[order(-values(p)$score)]
                     #p <- add.seqlengths(p, chr.sizes)
                 } else{

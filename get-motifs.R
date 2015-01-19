@@ -21,7 +21,7 @@ plot_path <- file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 
 # function in annotation-functions.R
-annotationInfo(tolower(args$assembly))
+get_annotation(tolower(args$assembly))
 
 # define variables
 memeDatabasePath <- '/nfs/research2/bertone/user/mxenoph/common/meme/motif_databases'
@@ -78,9 +78,9 @@ symlist <- function (names)
 
 # Read in peaks and get summits# {{{
 getLocus <- function(file){
-    peaks <- macs2GRanges(file)
+    peaks <- macs_to_granges(file)
     peaks <- peaks[order(-values(peaks)$score)]
-    peaks <- add.seqlengths(peaks, chr_size)
+    peaks <- add_seqlengths_to_gr(peaks, chr)
 
     #why just looking at + strand?
     summits <- GRanges(seqnames= seqnames(peaks),
@@ -520,7 +520,7 @@ main <- function(){
 
 main()
 
-#peaks <- macs2GRanges(args$peaks)
+#peaks <- macs_to_granges(args$peaks)
 #peaks <- add.seqlengths(peaks, chr_size)
 #peaks <- peaks[order(-values(peaks)$score)]
 #names(peaks) <- paste(seqnames(peaks), start(peaks), end(peaks), sep=":")

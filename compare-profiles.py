@@ -45,6 +45,14 @@ for i in args.ip:
 
 # Functions# {{{
 
+def tss_generator():# {{{
+    """
+    Generator function to yield TSS +/- 1kb of each annotated gene
+    """
+    for transcript in db.features_of_type('gene'):
+        if (re.match('chr', transcript.chrom)):
+            yield TSS(asinterval(transcript), upstream=1000, downstream=1000)# }}}
+
 # Create arrays in parallel, and save to disk for later
 def calc_signal ( ip, ctrl, anchor, basename, replicates =False ):# {{{
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
@@ -133,14 +141,6 @@ tss_filename= gff_filename.replace('.gtf', '.tss_nocontig.gtf')
 
 # Here we only create if needed, caching to disk.
 if not os.path.exists(tss_filename):
-    def tss_generator():
-        """
-        Generator function to yield TSS +/- 1kb of each annotated gene
-        """
-        for transcript in db.features_of_type('gene'):
-            if (re.match('chr', transcript.chrom)):
-                yield TSS(asinterval(transcript), upstream=1000, downstream=1000)
-                
     # A BedTool made out of a generator, and saved to file.
     tsses = pybedtools.BedTool(tss_generator()).saveas(tss_filename)
     # }}}

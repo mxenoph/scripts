@@ -33,7 +33,7 @@ parse_peaks <- function(config){# {{{
     chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
     
     y <- mclapply(as.vector(config[,'file']), function(files){
-                  bed <- macs2GRanges(files)
+                  bed <- macs_to_granges(files)
                   bed <- subset(bed, seqnames(bed) %in% chr)
                   names(bed) <- name_gr(bed)
                   return(bed)

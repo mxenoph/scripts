@@ -313,13 +313,13 @@ dev.off();# }}}
 #read.table("../chip/config/modifications_update.conf", Header=T, sep="\t")
 source("~/source/Rscripts/granges-functions.R")
 mbd3 <-import.bed("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.M2.Epi.peaks.bed")
-mbd3_gr <-macs2GRanges("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.M2.Epi_peaks.xls")
+mbd3_gr <-macs_to_granges("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.M2.Epi_peaks.xls")
 
 mi2b <-import.bed("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.Chd4.Epi.peaks.bed")
-mi2b_gr <-macs2GRanges("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.Chd4.Epi_peaks.xls")
+mi2b_gr <-macs_to_granges("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/E12.Chd4.Epi_peaks.xls")
 
 mi2b_ko <-import.bed("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/G9.Chd4.Epi.peaks.bed")
-mi2b_ko_gr <-macs2GRanges("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/G9.Chd4.Epi_peaks.xls")
+mi2b_ko_gr <-macs_to_granges("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm9/macs/G9.Chd4.Epi_peaks.xls")
 nurd <- mbd3[queryHits(findOverlaps(mbd3, mi2b))]
 #nurd <- intersect(mbd3, mi2b)
 

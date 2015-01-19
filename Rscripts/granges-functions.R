@@ -166,7 +166,7 @@ match.annot <- function(grange, grfeat, feat){
 # }}}
 
 ##################
-macs2GRanges <- function(peaks){# {{{
+macs_to_granges <- function(peaks){# {{{
     # List of packages to load
     x <- c('GenomicRanges')
     lapply(x, suppressMessages(library), character.only=T)

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Example usage: bsub -n 4 -M 20000 RunMapper.sh fastq genome mapper
-# e.g. genome = /nfs/research2/bertone/common/genome/MM9/MM9
+# Example usage: bsub -n 4 -M 20000 run-bowtie.sh fastq genome_index mapper
+# e.g. genome = /nfs/research2/bertone/common/genome/MM9/MM9 
 # Check if arguments are supplied
 if [ $# -eq 0 ]
 then
@@ -32,8 +32,15 @@ fi
 
 if [ $mapper == 'bowtie' ]
 then
-    describer=$(sed 's/\(.fastq\|.txt\)$//' <<< $fastq | sed 's/.*\///')
+    describer=$(sed 's/\(.fastq.*\|.fq.*\|.txt\)$//' <<< $fastq | sed 's/.*\///')
 
+    if [[ $fastq =~ ".gz" ]]
+    then
+        gunzip -d $fastq
+        fastq=${fastq/.gz/}
+        bowtie -m 1 -S -p 4 $genome $fastq > ${out}${describer}.sam
+        gunzip $fastq
+    fi
     # TODO: add more options if ever get PE reads for ChIP-seq or if I align RNA-Seq 
     # with bowtie instead of gsnap (not gapped alignment)
     # -p <n> launches parallel search threads => Always bsub it with -n 4
@@ -45,12 +52,17 @@ then
 fi
 
 # SAM to BAM
-samtools view -bS ${describer}.sam -o ${describer}.uns.bam
+samtools view -bS ${out}${describer}.sam -o ${out}${describer}.uns.bam
 echo -e `date +"%D%t%T"` "\t" "samtools view -bS ${out}${describer}.sam -o ${out}${describer}.uns.bam" >> ${out}FilesTree.log
 
 # Sort BAM
-samtools sort ${describer}.uns.bam ${describer}.sort
+samtools sort ${out}${describer}.uns.bam ${out}${describer}.sort
 echo -e `date +"%D%t%T"` "\t" "samtools sort ${out}${describer}.uns.bam ${out}${describer}.sort" >> ${out}FilesTree.log
 
+# Sort BAM
+samtools index ${out}${describer}.sort.bam
+echo -e `date +"%D%t%T"` "\t" "samtools index ${out}${describer}.sort.bam" >> ${out}FilesTree.log
+
 # Remove intermediate files
-rm ${out}${describer}.uns.bam
+#rm ${out}${describer}.sam
+#rm ${out}${describer}.uns.bam

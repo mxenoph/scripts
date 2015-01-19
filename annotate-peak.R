@@ -17,7 +17,7 @@ dir.create(plot_path, recursive= TRUE)
 
 # function in annotation-functions.R
 # returns chr_size and genes_gtf directly in the current environment
-annotationInfo(tolower(args$assembly))
+get_annotation(tolower(args$assembly))
 
 # define variables
 # }}}
@@ -145,7 +145,7 @@ bedtoolsClosest <- function(bed, annotation, output_path){# {{{
     
     system(sprintf('bedtools closest -D "b" -a %s -b %s > %s',
                bed,
-               annotation, # coming from the annotationInfo function
+               annotation, # coming from the annotationInfo function -- this will not work as I changed that function and it doesn't return annotation does it?
                file.path(output_path, output)
                ))
     # Example output; last column is the distance from the feature -- here across multiple lines for readability

@@ -30,12 +30,12 @@ common_targets <- as.vector(unlist(read.table("/nfs/research2/bertone/user/mxeno
 pnames <- unlist(strsplit('SUZ12;MBD3', ';'))
 ##
 
-# TODO: Check if files are xls before using macs2GRanges# {{{
+# TODO: Check if files are xls before using macs_to_granges# {{{
 peaks <- lapply(c(peaks_1, peaks_2), function(x){
 #peaks <- lapply(args[1:2], function(x){
                 # For macs xls files
                 if( grepl("\\.xls$", x) ){
-                    macs2GRanges(x)
+                    macs_to_granges(x)
                 }else if( grepl("\\.bed$", x) ){
                     import(x, format='bed')
                 }
