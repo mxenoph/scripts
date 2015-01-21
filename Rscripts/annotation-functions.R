@@ -1,4 +1,3 @@
-
 get_annotation <- function (assembly){# {{{
     x <- c('testit', 'rtracklayer', 'GenomicRanges')
     lapply(x, suppressMessages(library), character.only=T)
@@ -49,77 +48,145 @@ get_annotation <- function (assembly){# {{{
 
 }# }}}
 
-get_transcripts <- function(assembly){# {{{
+get_features <- function(host, dataset, assembly){# {{{
     x <- c('GenomicRanges', 'GenomicFeatures', 'biomaRt', 'rtracklayer')
     lapply(x, suppressMessages(library), character.only=T)
+    library('parallel')
 
-    host <- 'may2012.archive.ensembl.org'
-    dataset <- 'mmusculus_gene_ensembl'
+    assembly <- tolower(assembly)# {{{
 
-    database <- useMart(host=host, biomart='ENSEMBL_MART_ENSEMBL', dataset=dataset)
-    genes <- getBM(attributes=c("chromosome_name", "start_position", "end_position", "strand", "source",
-                                "gene_biotype", "ensembl_gene_id", "entrezgene", "mgi_symbol"),
+    database <- read.table("/nfs/research2/bertone/user/mxenoph/genome_dir/assemblies-annotations.config",
+                           header=T, stringsAsFactors=F, sep="\t")
+    chr <- database[database$assembly == assembly, 'chrom_sizes']# }}}
+    genome_path <- dirname(chr)
+
+    ensembl<-useMart(host=host, biomart='ENSEMBL_MART_ENSEMBL', dataset=dataset)
+
+    exons <- getBM(attributes=c("ensembl_gene_id",# {{{
+                                   "chromosome_name",
+                                   "exon_chrom_start",
+                                   "exon_chrom_end",
+                                   "strand",
+                                   "ensembl_exon_id"),
                    mart=ensembl)
+    exons <- split(exons, exons$ensembl_gene_id)
+    exons <- mclapply(exons, function(x){
+                      gr <- with(x, GRanges(seqnames=chromosome_name,
+                                            IRanges(exon_chrom_start, exon_chrom_end),
+                                            strand))
+                      gr <- reduce(gr)
+                      gr$exon_no <- paste0('exon_', 1:length(gr))
+                      
+                      gr <- change_seqnames(gr)
+                      gr <- add_seqlengths_to_gr(gr, chr)
+                      return(gr)
+                   })
+    # }}}
+
+    genes <- getBM(attributes=c("ensembl_gene_id",# {{{
+                                   "chromosome_name",
+                                   "start_position",
+                                   "end_position",
+                                   "strand"),
+                   mart=ensembl)
+    genes <- with(genes, GRanges(seqnames = chromosome_name,
+                                 IRanges(start_position, end_position),
+                                 strand,
+                                 names = ensembl_gene_id))
+    names(genes) <- genes$names
+    genes <- change_seqnames(genes)
+    genes <- add_seqlengths_to_gr(genes, chr)
+    # }}}
+
+    introns <- mclapply(names(exons), function(x){# {{{
+                        setdiff(genes[x], exons[[x]])
+                   })
+    names(introns) <- names(exons)# }}}
+
+#    protein_coding_db <- makeTranscriptDbFromBiomart(biomart="ENSEMBL_MART_ENSEMBL",# {{{
+#                                                     dataset=dataset,
+#                                                     transcript_ids=NULL,
+#                                                     circ_seqs=DEFAULT_CIRC_SEQS,
+#                                                     filters=as.list(c(biotype="protein_coding")),
+#                                                     id_prefix="ensembl_",
+#                                                     host=host,
+#                                                     miRBaseBuild=NA)# }}}
+
+    genic <- genes# {{{
+    strand(genic) <- '*'
+    genic <- reduce(genic)
+
+    chromosomes <- as(seqinfo(genic),'GRanges')
+    intergenic <- setdiff(chromosomes, genic)# }}}
+
+    # For saving I can't use list so convert to granges object
+    exons <- unlist(GRangesList(exons))
+    exons$ensembl_id <- names(exons)
+    names(exons) <- NULL
+    
+    introns <- unlist(GRangesList(introns))
+    introns$ensembl_id <- names(introns)
+    names(introns) <- NULL
+
+    export.gff3(exons, file.path(genome_path, paste0(assembly, '-exons')))
+    export.gff3(introns, file.path(genome_path, paste0(assembly, '-introns')))
+    export.gff3(intergenic, file.path(genome_path, paste0(assembly, '-intergenic')))
+
+    return(list(exons=exons, introns=introns, genes=genes, genic=genic, intergenic=intergenic)
+}# }}}
+
+#feat would be 'exon'# {{{
+#match.annot <- function(grange, grfeat, feat){
+annotate_range <- function(gr, genomic_feature, label){
+    x <- c('GenomicRanges', 'foreach')
+    lapply(x, suppressMessages(library), character.only=T)
+    library('parallel')
+    
+    ov <- findOverlaps(gr, genomic_feature)
+    # Calculate the width for each overlap
+    ov_width <- ranges(ov, ranges(gr), ranges(genomic_feature))
+    by_query_range <- splitAsList(ov_width, factor(queryHits(ov)))
+
+    q_attributes <- mclapply(names(by_query_range), function(x, hits, widths, q, s){
+                             # For every hit the query got and for which width is in by_query_range
+                             # get the index of the subject hits
+                             subject_hits <- subjectHits(hits[queryHits(hits) == x])
+                             subject_names <- names(s[subject_hits])
+                             overlap_width <- width(widths[[x]])
+                             query_ov_perc <- overlap_width / width(q[as.numeric(x)])
+                             paste(paste0(paste(subject_names, overlap_width, sep=":"),
+                                          "(", query_ov_perc, ")"),
+                                   collapse="; ")
+                   }, ov, by_query_range, gr, genomic_feature)
+    names(q_attributes) <- names(by_query_range)
+    
+    mclapply(names(q_attributes), function(x) {
+           mcols(gr)[as.numeric(x), 'attributes'] <<- q_attributes[[x]]
+                   })
+
+    q <- queryHits(overlaps)
+    names(q) <- names(grfeat[subjectHits(overlaps)])
+
+    #for when i thought i might add strand info for the exon/intron
+    #names(q) <- as.integer(subjectHits(overlaps))
+
+    #This is an IntegerList that i don't know how to coerce so I get the length as string
+    #w <- width(pintersect(grange[queryHits(overlaps)], grfeat[subjectHits(overlaps)]))
+
+    #split the list by feature matching index
+    tmp.split <- split(q, q)
+    tmp.split <- lapply(tmp.split, function(i){paste(unique(names(i)), collapse=';')})
+
+    #when I thought it would be easier to get strand this way
+    #tmp.split <- lapply(tmp.split, function(i){paste(unique(names(grfeat[as.integer(names(i))])), collapse=';')})
+    tmp.split <- unlist(tmp.split)
+    tmp<-rep('NA', length(grange))
+
+    tmp[as.integer(names(tmp.split))] <- unname(tmp.split)
+    metadata <- paste('spanning', label,  sep='.')
+    values(grange) <- cbind(values(grange), structure(data.frame(tmp), names=metadata))
+    return(grange)
 }
 # }}}
 
-get_features <- function(host, ds, chr.sizes){# {{{
-    x <- c('GenomicRanges', 'GenomicFeatures', 'biomaRt', 'rtracklayer')
-    lapply(x, suppressMessages(library), character.only=T)
 
-    #ensembl<-useMart(host=host, biomart='ENSEMBL_MART_ENSEMBL', dataset=ds)
-    #annotation <- getBM(attributes=c("ensembl_gene_id", "chromosome_name", "strand", "exon_chrom_start", "exon_chrom_end", "ensembl_exon_id"),  mart=ensembl)
-    #keep only chromosome
-    #annotation <- annotation[grep("^[\\dXYMT]{0,2}$", df$chromosome_name, perl=TRUE),]
-
-    txdb <- makeTranscriptDbFromBiomart(biomart="ENSEMBL_MART_ENSEMBL", dataset=ds, transcript_ids=NULL, circ_seqs=DEFAULT_CIRC_SEQS, filters="", id_prefix="ensembl_", host=host, miRBaseBuild=NA)
-
-    exons <- exonsBy(txdb, by=c("gene"))
-    exons <- unlist(exons)
-    exons <- alter.seqnames4granges(exons)
-
-    introns <- intronsByTranscript(txdb, use.names=TRUE)
-
-    # Unlist and remove duplicate introns.
-    introns  <- unlist(introns)
-    intronsNoDups <- introns[!duplicated(introns)]
-
-    #The select() function can map txid to geneid (and others). See ?select.
-    txnames <- names(intronsNoDups)
-    map <- select(txdb, keys=txnames, keytype='TXNAME', columns='GENEID')
-    map<- unique(map)
-    names(intronsNoDups) <- map[match(names(intronsNoDups), map$TXNAME), 'GENEID']
-
-    #This not working as expected
-    #idx <- map$GENEID[!is.na(map$GENEID)]
-    #intronsByGene <- split(intronsNoDups[!is.na(map$GENEID)], idx)
-    #names(intronsByGene) <- unique(idx)
-    intronsByGene <- split(intronsNoDups, names(intronsNoDups))
-    intronsByGene <- unlist(intronsByGene, use.names=FALSE)
-    punion(intronsByGene, intronsByGene)
-    intronsByGene <- alter.seqnames4granges(intronsByGene)
-
-    #CAUTION:The whole exon thing this way is a bit faulty-- correct before using
-
-    #Getting the transcripts for all genes
-    trx <- transcriptsBy(txdb, by='gene')
-    #Combining transcripts ranges for each gene to get genes
-    genes <- unlist(range(trx))
-    genes <- alter.seqnames4granges(genes)
-    #this can be called for mm9 so better not add the mm10 chrom sizes
-    genes <- add.seqlengths(genes, chr.sizes)
-    genes.nostrand <- genes
-    strand(genes.nostrand) <- '*'
-
-    genic <- reduce(genes.nostrand)
-    chrom.gr<-as(seqinfo(genic),'GRanges')
-    intergenic<-setdiff(chrom.gr,genic)
-
-    genic.str <- reduce(genes)
-    chrom.gr.str <- c(chrom.gr, chrom.gr)
-    strand(chrom.gr.str[1:length(chrom.gr)])<-'+'
-    strand(chrom.gr.str[(length(chrom.gr)+1):length(chrom.gr.str)])<-'-'
-    intergenic.str <- setdiff(chrom.gr.str, genic.str)
-    return(list(exons=exons, genes=genes, genic=genic, intergenic=intergenic, intergenic.str=intergenic.str, introns=intronsByGene))
-
-}# }}}
