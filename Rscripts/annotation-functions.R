@@ -132,7 +132,7 @@ get_features <- function(host, dataset, assembly){# {{{
     export.gff3(introns, file.path(genome_path, paste0(assembly, '-introns')))
     export.gff3(intergenic, file.path(genome_path, paste0(assembly, '-intergenic')))
 
-    return(list(exons=exons, introns=introns, genes=genes, genic=genic, intergenic=intergenic)
+    return(list(exons=exons, introns=introns, genes=genes, genic=genic, intergenic=intergenic))
 }# }}}
 
 #feat would be 'exon'# {{{
