@@ -107,7 +107,7 @@ macs2_to_granges <- function(peaks){# {{{
                  score= X.log10.pvalue.,
                  FE= fold_enrichment))
                  
-    if('X.log10.qvalue.' %in% colnames(peaks)) values(gr)[['fdr']] <- with(peaks, 'X.log10.qvalue.') # fdr column is not available if the experiment had no control
+    if('X.log10.qvalue.' %in% colnames(peaks)) values(gr)[['fdr']] <- with(peaks, X.log10.qvalue.) # fdr column is not available if the experiment had no control
     return(gr)
 }
 # }}}
