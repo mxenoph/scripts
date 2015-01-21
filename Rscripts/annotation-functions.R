@@ -160,32 +160,13 @@ annotate_range <- function(gr, genomic_feature, label){
                    }, ov, by_query_range, gr, genomic_feature)
     names(q_attributes) <- names(by_query_range)
     
-    mclapply(names(q_attributes), function(x) {
-           mcols(gr)[as.numeric(x), 'attributes'] <<- q_attributes[[x]]
-                   })
+    gr <- unlist(GRangesList(mclapply(names(q_attributes), function(x) {
+                                      mcols(gr)[as.numeric(x), 'attributes'] <- q_attributes[[x]]
+                                      gr[as.numeric(x)]
+                                          })
+    ))
 
-    q <- queryHits(overlaps)
-    names(q) <- names(grfeat[subjectHits(overlaps)])
-
-    #for when i thought i might add strand info for the exon/intron
-    #names(q) <- as.integer(subjectHits(overlaps))
-
-    #This is an IntegerList that i don't know how to coerce so I get the length as string
-    #w <- width(pintersect(grange[queryHits(overlaps)], grfeat[subjectHits(overlaps)]))
-
-    #split the list by feature matching index
-    tmp.split <- split(q, q)
-    tmp.split <- lapply(tmp.split, function(i){paste(unique(names(i)), collapse=';')})
-
-    #when I thought it would be easier to get strand this way
-    #tmp.split <- lapply(tmp.split, function(i){paste(unique(names(grfeat[as.integer(names(i))])), collapse=';')})
-    tmp.split <- unlist(tmp.split)
-    tmp<-rep('NA', length(grange))
-
-    tmp[as.integer(names(tmp.split))] <- unname(tmp.split)
-    metadata <- paste('spanning', label,  sep='.')
-    values(grange) <- cbind(values(grange), structure(data.frame(tmp), names=metadata))
-    return(grange)
+    return(gr)
 }
 # }}}
 
