@@ -135,7 +135,7 @@ get_features <- function(host, dataset, assembly){# {{{
     return(list(exons=exons, introns=introns, genes=genes, genic=genic, intergenic=intergenic))
 }# }}}
 
-#feat would be 'exon'# {{{
+# {{{
 #match.annot <- function(grange, grfeat, feat){
 annotate_range <- function(gr, genomic_feature, label){
     x <- c('GenomicRanges', 'foreach')
@@ -160,11 +160,7 @@ annotate_range <- function(gr, genomic_feature, label){
                    }, ov, by_query_range, gr, genomic_feature)
     names(q_attributes) <- names(by_query_range)
     
-    gr <- unlist(GRangesList(mclapply(names(q_attributes), function(x) {
-                                      mcols(gr)[as.numeric(x), 'attributes'] <- q_attributes[[x]]
-                                      gr[as.numeric(x)]
-                                          })
-    ))
+    mcols(gr)[as.numeric(names(q_attributes)), 'attributes'] <- unlist(q_attributes)
 
     return(gr)
 }
