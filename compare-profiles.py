@@ -19,6 +19,7 @@ parser.add_argument('-i', '--ip', nargs='+', metavar="file", type=str, required=
 parser.add_argument('-c', '--ctrl', nargs='+', metavar="file", type=str, required=True, help= 'Control bam files')
 parser.add_argument('-a', '--assembly', type=str, default='mm9', help= 'Assembly for the ensembl annotation. Default = mm9')
 parser.add_argument('-f', '--gtf', metavar="file", type=str, required=False, help= 'Alternative feature gtf')
+parser.add_argument('-e', '--expr', metavar="file", type=str, required=False, help= 'Deseq output file')
 parser.add_argument('-o', '--out_dir', metavar="path", type=str, required=True)
 
 args = parser.parse_args()
@@ -89,10 +90,15 @@ def get_N_HexCol(N=15):# {{{
         hex_out.append('#' + "".join(map(lambda x: chr(x).encode('hex'),rgb)))
     return hex_out# }}}
 
-def plot_norm_signals (norm_sub):# {{{
+def most_common(lst):
+    return max(set(lst), key=lst.count)
+
+def plot_norm_signals (norm_sub, label, window):# {{{
     # Create a meaningful x-axis
     import numpy as np
-    x = np.linspace(-1000, 1000, 100)
+    #x = np.linspace(-1000, 1000, 100)
+    window = window / 2
+    x = np.linspace(-window, window, 100)
     
     # Initial plot of average signal over TSSs
     from matplotlib import pyplot as plt
@@ -112,12 +118,88 @@ def plot_norm_signals (norm_sub):# {{{
     ax.axvline(-150, linestyle=':', color='r')
     
     # Add labels and legend
-    ax.set_xlabel('Distance from TSS (bp)')
+    ax.set_xlabel('Distance from ' + label +' (bp)')
     ax.set_ylabel('Normalised average read coverage (per million mapped reads)')
     ax.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
 
     return fig;# }}}
 # }}}
+
+
+def signal_expr(normalized_subtracted, expr, window):# {{{
+
+    import numpy as np
+    window = window / 2
+    x = np.linspace(-window, window, 100)
+    from matplotlib import pyplot as plt
+
+    fig = plt.figure(figsize=(6,6))
+
+    for key in norm_sub.keys():
+        ax.plot(x, norm_sub.get(key).mean(axis=0), color=colors[norm_sub.keys().index(key)], label=key)
+
+    de_axes = fig.add_subplot(121)# {{{
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05)).values, :],
+            line_kwargs=dict(color='#fe9829', label='up'),
+            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+            ax=de_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05)).values, :],
+            line_kwargs=dict(color='#8e3104', label='down'),
+            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+            ax=de_axes)
+    metaseq.plotutils.ci_plot(
+            x,
+            normalized_subtracted[((expr.padj > 0.05)).values, :],
+            line_kwargs=dict(color='.5', label='unchanged'),
+            fill_kwargs=dict(color='.5', alpha=0.3),
+            ax=de_axes)# }}}
+
+#    de_bound_axes = fig.add_subplot(122)# {{{
+#    metaseq.plotutils.ci_plot(
+#            x,
+#            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05) & (expr.boolean == 1)).values, :],
+#            line_kwargs=dict(color='#fe9829', label='up'),
+#            fill_kwargs=dict(color='#fe9829', alpha=0.3),
+#            ax=de_bound_axes)
+#    metaseq.plotutils.ci_plot(
+#            x,
+#            normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05) & (expr.boolean == 1)).values, :],
+#            line_kwargs=dict(color='#8e3104', label='down'),
+#            fill_kwargs=dict(color='#8e3104', alpha=0.3),
+#            ax=de_bound_axes)
+#    metaseq.plotutils.ci_plot(
+#            x,
+#            normalized_subtracted[((expr.padj > 0.05) & (expr.boolean == 1)).values, :],
+#            line_kwargs=dict(color='.5', label='unchanged'),
+#            fill_kwargs=dict(color='.5', alpha=0.3),
+#            ax=de_bound_axes)# }}}
+
+    # Clean up redundant x tick labels, and add axes labels
+    de_axes.set_ylabel('Average\nenrichment')
+    de_axes.set_title('Differentially expressed')
+    de_axes.set_xlim([-window, window])
+
+#    de_bound_axes.set_title('Bound')
+#    de_bound_axes.set_ylabel('Average\nenrichment')
+#    de_bound_axes.set_xlim([-1000, 1000])
+#    
+    # Add the vertical lines for TSS position to all axes
+    for ax in [de_axes]:
+        ax.axvline(0, linestyle=':', color='k')
+
+        # Nice legend
+        de_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        #de_bound_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+
+    fig.tight_layout()
+    return fig;
+
+# }}}
+
 
 # Create database from ensembl GTF if it does not already exist# {{{
 import pandas as df
@@ -168,14 +250,6 @@ for i in range(len(args.ip)):
 
     calc_signal(ip_signal, input_signal, tsses, base)
 
-    try:
-        alternative_features
-    except:
-        print "Only computing enrichment around the TSS."
-    else:
-        calc_signal(ip_signal, input_signal, alternative_features, base + '.mb3_peak')
-
-
     # Load the windows and arrays
     from metaseq import persistence
     features, arrays = persistence.load_features_and_arrays(prefix=base)
@@ -184,10 +258,41 @@ for i in range(len(args.ip)):
     normalized_subtracted = arrays['ip'] - arrays['input']
     norm_sub[ip_filename] = normalized_subtracted
 
+    from matplotlib.backends.backend_pdf import PdfPages
+    # Create pdfpage object
+    pp = PdfPages(plot_dir + 'test2' + '-averageSignal.pdf')
+    pp.savefig(plot_norm_signals(norm_sub, 'TSS', 2000))
+    
+    from metaseq.results_table import DESeqResults
+    expr = DESeqResults(args.expr, import_kwargs=dict(index_col=0))
+    expr = expr.reindex_to(tsses, attribute='gene_id')
+    pp.savefig(signal_expr(norm_sub, expr, 2000))
 
-from matplotlib.backends.backend_pdf import PdfPages
-# Create pdfpage object
-pp = PdfPages(plot_dir + 'm2-mi2b' + '-averageSignal.pdf')
-pp.savefig(plot_norm_signals(norm_sub))
-pp.close()
+    try:# {{{
+        alternative_features
+    except:
+        print "Only computing enrichment around the TSS."
+    else:
+        gtf_base = base + '.alternative_features'
+
+        from joblib import Parallel, delayed
+        import multiprocessing
+        inputs = range(1, len(alternative_features))
+        processes = multiprocessing.cpu_count()
+        
+        # returns the width of a range (i) in the pybedtool object
+        def interval_width(i, bedtool):
+            return len(bedtool[i])
+
+        widths = Parallel(n_jobs = processes)(delayed(interval_width)(i, alternative_features) for i in inputs)
+        window = most_common(widths)
+        
+        calc_signal(ip_signal, input_signal, alternative_features, gtf_base)
+        features, arrays = persistence.load_features_and_arrays(prefix = gtf_base)
+        # Normalize IP to the control
+        normalized_subtracted = arrays['ip'] - arrays['input']
+        norm_sub[ip_filename] = normalized_subtracted
+        pp.savefig(plot_norm_signals(norm_sub, 'midpoint', window))# }}}
+
+    pp.close()
 # }}}
