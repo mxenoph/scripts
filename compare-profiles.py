@@ -201,29 +201,19 @@ def signal_bound(norm_sub, subset, window, **kwargs):# {{{
     n_samples = len(norm_sub.keys())
     colors = get_N_HexCol(n_samples)
     heatmaps = dict()
+    norm_sub_bound = dict()
     
-    # Converting numbers to strings and making a matrix to hold the information for bound/not
+    # Converting numbers to strings and making a matrix to hold the information for bound/not# {{{
     subset_by = [str(num) for num in subset.boolean.values]
     subset_by = [w.replace('1', 'Bound') for w in subset_by]
     subset_by = [w.replace('0', 'Not bound') for w in subset_by]
     subset_by = array(subset_by, dtype="|S32")
 
     subset_order = ['Not bound', 'Bound']
+    # }}}
 
     for key in norm_sub.keys():
         normalized_subtracted = norm_sub.get(key)
-
-        # bound.bound ==1 returns a TRUE/FALSE vector and it's in the same order as the tsses
-        # that used to make the normalized_subtracted array, hence order is the same
-        normalized_subtracted = normalized_subtracted[(subset.boolean==1).values, :]
-        color = colors[norm_sub.keys().index(key)]
-        print 'in signal bound'
-        print key
-        metaseq.plotutils.ci_plot(x,
-                normalized_subtracted,
-                ax = ax,
-                line_kwargs=dict(color= color, label=key),
-                fill_kwargs=dict(color= color, alpha=0.3))
 
         heatmaps[key] = metaseq.plotutils.imshow(normalized_subtracted,
                 x,
@@ -232,24 +222,39 @@ def signal_bound(norm_sub, subset, window, **kwargs):# {{{
                 sort_by=normalized_subtracted.mean(axis=1),
                 subset_by= subset_by,
                 subset_order=subset_order,
-                line_kwargs=dict(color= color, label=key),
-                fill_kwargs=dict(color= color, alpha=0.3))
+                line_kwargs=[dict(color='k', label='Not bound'), dict(color='r', label='Bound')],
+                fill_kwargs=[dict(color='k', alpha=0.3), dict(color='r', alpha=0.3)])
         # adding labels to heatmap
         metaseq.plotutils.add_labels_to_subsets(heatmaps[key].array_axes, subset_by=subset_by, subset_order=subset_order,)
         # adding labels to average signal plot
-        heatmaps[key].line_axes.legend(loc='best', frameon=False);
+        heatmaps[key].line_axes.legend(loc='best', frameon=False)
 
-        
-    fig.line_axes.legend(loc='best', frameon=False);
+        # bound.bound ==1 returns a TRUE/FALSE vector and it's in the same order as the tsses
+        # that used to make the normalized_subtracted array, hence order is the same
+        normalized_subtracted = normalized_subtracted[(subset.boolean==1).values, :]
+        color = colors[norm_sub.keys().index(key)]
+
+        metaseq.plotutils.ci_plot(x,
+                normalized_subtracted,
+                ax = ax,
+                line_kwargs=dict(color= color, label=key),
+                fill_kwargs=dict(color= color, alpha=0.3))
+
+        norm_sub_bound[key]= normalized_subtracted
+
+    ax.set_xlabel('Distance from ' + 'TSS' +' (bp)')
+    ax.set_ylabel('Normalised average read coverage (per million mapped reads)')
+    ax.set_title('Subset: Bound')
+    ax.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
     fig.tight_layout()
 
     try:
         expr
-    except:
-        print "Plotting signal for bound and regulated genes."
+    # if expr is None taht means no argument expr was provided to this function
+    except None:
+        print "Plotting signal only for bound genes."
     else:
-        print 'All good'
-
+        print 'ok'
 #        expr_subset = expr.loc[subset]
 #        axes = plot_by_expression(norm_sub, expr_bound, ax, ' (Bound + DE)')
 #        return bound, axes;
@@ -383,7 +388,6 @@ if args.bound:
     bound = ResultsTable(args.bound, import_kwargs=dict(index_col=0))
     # reindexing the bound dataframe 
     bound = bound.reindex_to(tsses, attribute = 'gene_id')
-    #pp.savefig(signal_bound(norm_sub, bound, 2000, expr = expr))
     pp.savefig(signal_bound(norm_sub, bound, 2000))
 
 pp.close()
