@@ -6,9 +6,11 @@
 
 # Import modules# {{{
 import os, sys, argparse, re
+from time import gmtime, strftime
 import gffutils
 import pybedtools
 import metaseq
+from pylab import *
 from pybedtools.featurefuncs import TSS
 from gffutils.helpers import asinterval# }}}
 
@@ -20,6 +22,8 @@ parser.add_argument('-c', '--ctrl', nargs='+', metavar="file", type=str, require
 parser.add_argument('-a', '--assembly', type=str, default='mm9', help= 'Assembly for the ensembl annotation. Default = mm9')
 parser.add_argument('-f', '--gtf', metavar="file", type=str, required=False, help= 'Alternative feature gtf')
 parser.add_argument('-e', '--expr', metavar="file", type=str, required=False, help= 'Deseq output file')
+parser.add_argument('-b', '--bound', metavar="file", type=str, required=False, help= 'TSV file with gene_id (ensembl) and bound (1/0) fields')
+parser.add_argument('-l', '--label', type=str, required=False, default= strftime("%Y-%m-%d-%Hh%Mm", gmtime()), help= 'Label to be used in plottting output file')
 parser.add_argument('-o', '--out_dir', metavar="path", type=str, required=True)
 
 args = parser.parse_args()
@@ -55,7 +59,7 @@ def tss_generator():# {{{
             yield TSS(asinterval(transcript), upstream=1000, downstream=1000)# }}}
 
 # Create arrays in parallel, and save to disk for later
-def calc_signal ( ip, ctrl, anchor, basename, replicates =False ):# {{{
+def calc_signal ( ip, ctrl, anchor, basename):# {{{
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
     from metaseq import persistence
     import multiprocessing
@@ -63,7 +67,7 @@ def calc_signal ( ip, ctrl, anchor, basename, replicates =False ):# {{{
     
     out = basename + '.npz'
     # Run if file does not exist and experiment has no replicates
-    if not os.path.exists(out) & (not replicates):
+    if not os.path.exists(out):
         # Create arrays in parallel
         ip_array = ip_signal.array(anchor, bins=100, processes=processes)
         input_array = input_signal.array(anchor, bins=100, processes=processes)
@@ -104,8 +108,8 @@ def plot_norm_signals (norm_sub, label, window):# {{{
     from matplotlib import pyplot as plt
     fig = plt.figure()
     ax = fig.add_subplot(111)
-#    colors = ['b', 'g', 'r', 'c', 'k', 'm']
-    colors = get_N_HexCol(12)
+    n_samples = len(norm_sub.keys())
+    colors = get_N_HexCol(n_samples)
     
     for key in norm_sub.keys():
         ax.plot(x, norm_sub.get(key).mean(axis=0), color=colors[norm_sub.keys().index(key)], label=key)
@@ -123,83 +127,137 @@ def plot_norm_signals (norm_sub, label, window):# {{{
     ax.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
 
     return fig;# }}}
-# }}}
 
-
-def signal_expr(normalized_subtracted, expr, window):# {{{
-
+def signal_expr(norm_sub, expr, window, label = ' (DE)'):# {{{
     import numpy as np
-    window = window / 2
-    x = np.linspace(-window, window, 100)
     from matplotlib import pyplot as plt
 
-    fig = plt.figure(figsize=(6,6))
+    window = window / 2
+    x = np.linspace(-window, window, 100)
+    
+    de = plt.figure()
+    # Depends on the replicate number
+    number_of_subplots = len(norm_sub.keys())
+
+    def plot_by_expression(normalized_subtracted, expr, axes, title):# {{{
+        metaseq.plotutils.ci_plot(
+                x,
+                normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05)).values, :],
+                line_kwargs=dict(color='#fe9829', label='up'),
+                fill_kwargs=dict(color='#fe9829', alpha=0.3),
+                ax= axes)
+        metaseq.plotutils.ci_plot(
+                x,
+                normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05)).values, :],
+                line_kwargs=dict(color='#8e3104', label='down'),
+                fill_kwargs=dict(color='#8e3104', alpha=0.3),
+                ax= axes)
+        metaseq.plotutils.ci_plot(
+                x,
+                normalized_subtracted[((expr.padj > 0.05)).values, :],
+                line_kwargs=dict(color='.5', label='unchanged'),
+                fill_kwargs=dict(color='.5', alpha=0.3),
+                ax= axes)
+        
+        axes.set_ylabel('Average\nenrichment')
+        axes.set_title(title)
+        axes.set_xlim([-window, window])
+        axes.axvline(0, linestyle=':', color='k')
+        axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
+        
+        return axes;# }}}
 
     for key in norm_sub.keys():
-        ax.plot(x, norm_sub.get(key).mean(axis=0), color=colors[norm_sub.keys().index(key)], label=key)
-
-    de_axes = fig.add_subplot(121)# {{{
-    metaseq.plotutils.ci_plot(
-            x,
-            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05)).values, :],
-            line_kwargs=dict(color='#fe9829', label='up'),
-            fill_kwargs=dict(color='#fe9829', alpha=0.3),
-            ax=de_axes)
-    metaseq.plotutils.ci_plot(
-            x,
-            normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05)).values, :],
-            line_kwargs=dict(color='#8e3104', label='down'),
-            fill_kwargs=dict(color='#8e3104', alpha=0.3),
-            ax=de_axes)
-    metaseq.plotutils.ci_plot(
-            x,
-            normalized_subtracted[((expr.padj > 0.05)).values, :],
-            line_kwargs=dict(color='.5', label='unchanged'),
-            fill_kwargs=dict(color='.5', alpha=0.3),
-            ax=de_axes)# }}}
-
-#    de_bound_axes = fig.add_subplot(122)# {{{
-#    metaseq.plotutils.ci_plot(
-#            x,
-#            normalized_subtracted[((expr.log2FoldChange > 0) & (expr.padj <= 0.05) & (expr.boolean == 1)).values, :],
-#            line_kwargs=dict(color='#fe9829', label='up'),
-#            fill_kwargs=dict(color='#fe9829', alpha=0.3),
-#            ax=de_bound_axes)
-#    metaseq.plotutils.ci_plot(
-#            x,
-#            normalized_subtracted[((expr.log2FoldChange < 0) & (expr.padj <= 0.05) & (expr.boolean == 1)).values, :],
-#            line_kwargs=dict(color='#8e3104', label='down'),
-#            fill_kwargs=dict(color='#8e3104', alpha=0.3),
-#            ax=de_bound_axes)
-#    metaseq.plotutils.ci_plot(
-#            x,
-#            normalized_subtracted[((expr.padj > 0.05) & (expr.boolean == 1)).values, :],
-#            line_kwargs=dict(color='.5', label='unchanged'),
-#            fill_kwargs=dict(color='.5', alpha=0.3),
-#            ax=de_bound_axes)# }}}
-
-    # Clean up redundant x tick labels, and add axes labels
-    de_axes.set_ylabel('Average\nenrichment')
-    de_axes.set_title('Differentially expressed')
-    de_axes.set_xlim([-window, window])
-
-#    de_bound_axes.set_title('Bound')
-#    de_bound_axes.set_ylabel('Average\nenrichment')
-#    de_bound_axes.set_xlim([-1000, 1000])
-#    
-    # Add the vertical lines for TSS position to all axes
-    for ax in [de_axes]:
-        ax.axvline(0, linestyle=':', color='k')
-
-        # Nice legend
-        de_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
-        #de_bound_axes.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
-
-    fig.tight_layout()
-    return fig;
-
+        normalized_subtracted = norm_sub.get(key)
+        # This will return the index number for the key which will then be used to define subplot
+        v = norm_sub.keys().index(key) + 1
+        v = int(str(number_of_subplots) + str(2) + str(v))
+      
+        ax = de.add_subplot(v)
+        title = key + label
+        axes = plot_by_expression(normalized_subtracted, expr, ax, title)
+        
+    de.tight_layout()
+    return de;
 # }}}
 
+# bound should be a all genes with 1 indicating bound and 0 not bound
+# TODO: replicates should be plotted together split by bound and not bound
+# add check if expression matrix provided and if so call signal_expr
+# kwargs = optional arguments
+def signal_bound(norm_sub, subset, window, **kwargs):# {{{
+    # If expr object/dataframe not provided then set to none for the next checks
+    expr = kwargs.get('expr', None)
+
+    import numpy as np
+    from matplotlib import pyplot as plt
+
+    window = window / 2
+    x = np.linspace(-window, window, 100)
+    
+    fig = plt.figure()
+    # 2 subplots: one for bound and the other one for not bound
+    ax = fig.add_subplot(111)
+    n_samples = len(norm_sub.keys())
+    colors = get_N_HexCol(n_samples)
+    heatmaps = dict()
+    
+    # Converting numbers to strings and making a matrix to hold the information for bound/not
+    subset_by = [str(num) for num in subset.boolean.values]
+    subset_by = [w.replace('1', 'Bound') for w in subset_by]
+    subset_by = [w.replace('0', 'Not bound') for w in subset_by]
+    subset_by = array(subset_by, dtype="|S32")
+
+    subset_order = ['Not bound', 'Bound']
+
+    for key in norm_sub.keys():
+        normalized_subtracted = norm_sub.get(key)
+
+        # bound.bound ==1 returns a TRUE/FALSE vector and it's in the same order as the tsses
+        # that used to make the normalized_subtracted array, hence order is the same
+        normalized_subtracted = normalized_subtracted[(subset.boolean==1).values, :]
+        color = colors[norm_sub.keys().index(key)]
+        print 'in signal bound'
+        print key
+        metaseq.plotutils.ci_plot(x,
+                normalized_subtracted,
+                ax = ax,
+                line_kwargs=dict(color= color, label=key),
+                fill_kwargs=dict(color= color, alpha=0.3))
+
+        heatmaps[key] = metaseq.plotutils.imshow(normalized_subtracted,
+                x,
+                features=tsses,
+                vmin=5, vmax=95, percentile=True,
+                sort_by=normalized_subtracted.mean(axis=1),
+                subset_by= subset_by,
+                subset_order=subset_order,
+                line_kwargs=dict(color= color, label=key),
+                fill_kwargs=dict(color= color, alpha=0.3))
+        # adding labels to heatmap
+        metaseq.plotutils.add_labels_to_subsets(heatmaps[key].array_axes, subset_by=subset_by, subset_order=subset_order,)
+        # adding labels to average signal plot
+        heatmaps[key].line_axes.legend(loc='best', frameon=False);
+
+        
+    fig.line_axes.legend(loc='best', frameon=False);
+    fig.tight_layout()
+
+    try:
+        expr
+    except:
+        print "Plotting signal for bound and regulated genes."
+    else:
+        print 'All good'
+
+#        expr_subset = expr.loc[subset]
+#        axes = plot_by_expression(norm_sub, expr_bound, ax, ' (Bound + DE)')
+#        return bound, axes;
+
+    return fig;
+# }}}
+
+# }}}
 
 # Create database from ensembl GTF if it does not already exist# {{{
 import pandas as df
@@ -227,7 +285,7 @@ if not os.path.exists(tss_filename):
     tsses = pybedtools.BedTool(tss_generator()).saveas(tss_filename)
     # }}}
 
-# For each bam calculate signal and plot it# {{{
+#z For each bam calculate signal and plot it# {{{
 # The windows we'll get signal over
 tsses = pybedtools.BedTool(tss_filename)
 # for looking at other features
@@ -237,6 +295,8 @@ if args.gtf:
     alternative_features = pybedtools.BedTool(args.gtf)
 
 norm_sub = dict()
+norm_sub_alt_feat = dict()
+
 # Create genomic_signal objects that point to data files
 for i in range(len(args.ip)):
     base = os.path.splitext(os.path.basename(args.ip[i]))[0]
@@ -257,16 +317,6 @@ for i in range(len(args.ip)):
     # Normalize IP to the control
     normalized_subtracted = arrays['ip'] - arrays['input']
     norm_sub[ip_filename] = normalized_subtracted
-
-    from matplotlib.backends.backend_pdf import PdfPages
-    # Create pdfpage object
-    pp = PdfPages(plot_dir + 'test2' + '-averageSignal.pdf')
-    pp.savefig(plot_norm_signals(norm_sub, 'TSS', 2000))
-    
-    from metaseq.results_table import DESeqResults
-    expr = DESeqResults(args.expr, import_kwargs=dict(index_col=0))
-    expr = expr.reindex_to(tsses, attribute='gene_id')
-    pp.savefig(signal_expr(norm_sub, expr, 2000))
 
     try:# {{{
         alternative_features
@@ -291,8 +341,50 @@ for i in range(len(args.ip)):
         features, arrays = persistence.load_features_and_arrays(prefix = gtf_base)
         # Normalize IP to the control
         normalized_subtracted = arrays['ip'] - arrays['input']
-        norm_sub[ip_filename] = normalized_subtracted
-        pp.savefig(plot_norm_signals(norm_sub, 'midpoint', window))# }}}
+        norm_sub_alt_feat[ip_filename] = normalized_subtracted # }}}
 
-    pp.close()
+# }}}
+
+# Plotting ## {{{
+from matplotlib.backends.backend_pdf import PdfPages
+# Create pdfpage object
+pp = PdfPages(plot_dir + args.label + '-averageSignal.pdf')
+pp.savefig(plot_norm_signals(norm_sub, 'TSS', 2000))
+
+try:# {{{
+    alternative_features
+except:
+    print "Only computing enrichment around the TSS."
+else:
+    gtf_base = base + '.alternative_features'
+
+    from joblib import Parallel, delayed
+    import multiprocessing
+    inputs = range(1, len(alternative_features))
+    processes = multiprocessing.cpu_count()
+    
+    # returns the width of a range (i) in the pybedtool object
+    def interval_width(i, bedtool):
+        return len(bedtool[i])
+
+    widths = Parallel(n_jobs = processes)(delayed(interval_width)(i, alternative_features) for i in inputs)
+    window = most_common(widths)
+    
+    pp.savefig(plot_norm_signals(norm_sub_alt_feat, 'midpoint', window)) # }}}
+    
+if args.expr:
+    from metaseq.results_table import DESeqResults
+    expr = DESeqResults(args.expr, import_kwargs=dict(index_col=0))
+    expr = expr.reindex_to(tsses, attribute='gene_id')
+    pp.savefig(signal_expr(norm_sub, expr, 2000))
+
+if args.bound:
+    from metaseq.results_table import ResultsTable
+    bound = ResultsTable(args.bound, import_kwargs=dict(index_col=0))
+    # reindexing the bound dataframe 
+    bound = bound.reindex_to(tsses, attribute = 'gene_id')
+    #pp.savefig(signal_bound(norm_sub, bound, 2000, expr = expr))
+    pp.savefig(signal_bound(norm_sub, bound, 2000))
+
+pp.close()
 # }}}
