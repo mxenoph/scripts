@@ -234,6 +234,21 @@ drawVenn <- function(sets){# {{{
     vn_plot <- plot(vn, type="ChowRuskey", doWeights=TRUE, show=list(SetLabels=TRUE, FaceLabels=FALSE), gp=theme_vn)
 }# }}}
 
+# Sets should be a named list containing the 
+draw_venn_diagram <- function(sets){# {{{
+    x <- c('Vennerable', 'RColorBrewer')
+    mclapply(x, suppressMessages(library), character.only=T)
+    
+    cols <- brewer.pal(9, "Set1")
+
+    c1 <- Venn(SetNames = c('NuRD', 'MTA1 FLAG', 'MTA2 GFP'), Weight = c(`000`=0, `100` = 4563, `110`=1071, `111` = 5597, `101`=3136, `010`=167, `011`=45, `001`=237))
+    c2 <- Venn(SetNames = c('NuRD', 'MTA1', 'MTA2'), Weight = c(`000`=0, `100` = 32544, `110`=10524, `111` = 19820, `101`=6606, `010`=5947, `011`=1079, `001`=1541))
+    c3 <- Venn(SetNames = c('chd4', 'MTA1 FLAG', 'MTA2 GFP'), Weight = c(`000`=0, `100` = 115218, `110`=13457, `111` = 20573, `101`=7096, `010`=2472, `011`=360, `001`=514))
+    c4 <- Venn(SetNames = c('Mbd3', 'MTA1 FLAG', 'MTA2 GFP'), Weight = c(`000`=0, `100` =37722, `110`=10805, `111` = 19968, `101`=6760, `010`=5504, `011`=937, `001`=1396))
+    plot(c1,  doWeights = TRUE, type = "circles")
+}
+# }}}
+
 # TODO: move to functions.R and source that file
 deseq2vect <- function(f, padj=0.05){# {{{
     raw <- df <- read.table(f, header=TRUE, sep="\t", row.names='id')
