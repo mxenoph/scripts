@@ -5,6 +5,8 @@
 #
 
 # Import modules# {{{
+# Needed for division to return float
+from __future__ import division
 import os, sys, argparse, re
 from time import gmtime, strftime
 import gffutils
@@ -49,6 +51,10 @@ for i in args.ip:
     basename.append(base)#}}}
 
 # Functions# {{{
+class ref:
+    def __init__(self, obj): self.obj = obj
+    def get(self):    return self.obj
+    def set(self, obj):      self.obj = obj
 
 def tss_generator():# {{{
     """
@@ -171,11 +177,13 @@ def signal_expr(norm_sub, expr, window, label = ' (DE)'):# {{{
         normalized_subtracted = norm_sub.get(key)
         # This will return the index number for the key which will then be used to define subplot
         v = norm_sub.keys().index(key) + 1
-        v = int(str(number_of_subplots) + str(2) + str(v))
+        import math
+        v = int(str(int(math.ceil(number_of_subplots/2))) + str(2) + str(v))
       
         ax = de.add_subplot(v)
         title = key + label
-        axes = plot_by_expression(normalized_subtracted, expr, ax, title)
+        #axes = plot_by_expression(normalized_subtracted, expr, ax, title)
+        plot_by_expression(normalized_subtracted, expr, ax, title)
         
     de.tight_layout()
     return de;
@@ -185,7 +193,7 @@ def signal_expr(norm_sub, expr, window, label = ' (DE)'):# {{{
 # TODO: replicates should be plotted together split by bound and not bound
 # add check if expression matrix provided and if so call signal_expr
 # kwargs = optional arguments
-def signal_bound(norm_sub, subset, window, **kwargs):# {{{
+def signal_bound(norm_sub, subset, window, pp, **kwargs):# {{{
     # If expr object/dataframe not provided then set to none for the next checks
     expr = kwargs.get('expr', None)
 
@@ -195,11 +203,12 @@ def signal_bound(norm_sub, subset, window, **kwargs):# {{{
     window = window / 2
     x = np.linspace(-window, window, 100)
     
-    fig = plt.figure()
-    # 2 subplots: one for bound and the other one for not bound
-    ax = fig.add_subplot(111)
     n_samples = len(norm_sub.keys())
     colors = get_N_HexCol(n_samples)
+
+    fig = plt.figure()
+    # For all bound TSS
+    ax = fig.add_subplot(111)
     heatmaps = dict()
     norm_sub_bound = dict()
     
@@ -215,7 +224,7 @@ def signal_bound(norm_sub, subset, window, **kwargs):# {{{
     for key in norm_sub.keys():
         normalized_subtracted = norm_sub.get(key)
 
-        heatmaps[key] = metaseq.plotutils.imshow(normalized_subtracted,
+        heatmaps[key]= metaseq.plotutils.imshow(normalized_subtracted,
                 x,
                 features=tsses,
                 vmin=5, vmax=95, percentile=True,
@@ -228,6 +237,8 @@ def signal_bound(norm_sub, subset, window, **kwargs):# {{{
         metaseq.plotutils.add_labels_to_subsets(heatmaps[key].array_axes, subset_by=subset_by, subset_order=subset_order,)
         # adding labels to average signal plot
         heatmaps[key].line_axes.legend(loc='best', frameon=False)
+        heatmaps[key].suptitle(key + "\n(Bound genes: " + str(len(subset[subset_by=='Bound'])) + ' )')
+        pp.savefig(heatmaps[key])
 
         # bound.bound ==1 returns a TRUE/FALSE vector and it's in the same order as the tsses
         # that used to make the normalized_subtracted array, hence order is the same
@@ -247,19 +258,21 @@ def signal_bound(norm_sub, subset, window, **kwargs):# {{{
     ax.set_title('Subset: Bound')
     ax.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
     fig.tight_layout()
+    pp.savefig(fig)
 
     try:
         expr
-    # if expr is None taht means no argument expr was provided to this function
+    # if expr is None that means no argument expr was provided to this function
     except None:
         print "Plotting signal only for bound genes."
     else:
-        print 'ok'
-#        expr_subset = expr.loc[subset]
-#        axes = plot_by_expression(norm_sub, expr_bound, ax, ' (Bound + DE)')
-#        return bound, axes;
+        expr_subset = expr.loc[bound[subset.boolean==1].index]
+        axes = signal_expr(norm_sub_bound, expr_subset, window*2, ' (Bound + DE)')
+        pp.savefig(axes);
 
-    return fig;
+#    return (fig, axes)
+
+
 # }}}
 
 # }}}
@@ -290,7 +303,7 @@ if not os.path.exists(tss_filename):
     tsses = pybedtools.BedTool(tss_generator()).saveas(tss_filename)
     # }}}
 
-#z For each bam calculate signal and plot it# {{{
+# For each bam calculate signal and plot it# {{{
 # The windows we'll get signal over
 tsses = pybedtools.BedTool(tss_filename)
 # for looking at other features
@@ -301,6 +314,9 @@ if args.gtf:
 
 norm_sub = dict()
 norm_sub_alt_feat = dict()
+print 'up to here all good'
+
+print len(args.ip)
 
 # Create genomic_signal objects that point to data files
 for i in range(len(args.ip)):
@@ -328,6 +344,7 @@ for i in range(len(args.ip)):
     except:
         print "Only computing enrichment around the TSS."
     else:
+        print 'Computing for alternative features'
         gtf_base = base + '.alternative_features'
 
         from joblib import Parallel, delayed
@@ -361,8 +378,6 @@ try:# {{{
 except:
     print "Only computing enrichment around the TSS."
 else:
-    gtf_base = base + '.alternative_features'
-
     from joblib import Parallel, delayed
     import multiprocessing
     inputs = range(1, len(alternative_features))
@@ -388,7 +403,10 @@ if args.bound:
     bound = ResultsTable(args.bound, import_kwargs=dict(index_col=0))
     # reindexing the bound dataframe 
     bound = bound.reindex_to(tsses, attribute = 'gene_id')
-    pp.savefig(signal_bound(norm_sub, bound, 2000))
+    signal_bound(norm_sub, bound, 2000, pp, expr=expr)
+#    pp.savefig(p1)
+#    pp.savefig(p2)
+#    pp.savefig(p3)
 
 pp.close()
 # }}}
