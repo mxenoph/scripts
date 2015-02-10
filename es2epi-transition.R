@@ -4,6 +4,8 @@ x <- c('topGO', 'org.Mm.eg.db', 'VennDiagram')
 lapply(x, suppressMessages(library), character.only=T)# }}}
 
 path <- "/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal"
+
+
 wt <- file.path(path, "WT_2ivsWT_Epi.txt")
 ko <- file.path(path, "KO_2ivsKO_Epi.txt")
 
@@ -12,6 +14,15 @@ dir.create(plot_path, recursive= TRUE)
 
 wt <- deseq2vect(wt)
 ko <- deseq2vect(ko)
+
+load("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/TestMe/FPKMs.Rdata")
+
+matrix <- fpkms[, grep('Epi|2i', colnames(fpkms))]
+wt_matrix <- matrix[rownames(wt$de), grep("2lox|3Flox", colnames(matrix))]
+wt_matrix <- wt_matrix[, c(grep("2i", colnames(wt_matrix)), grep("Epi", colnames(wt_matrix)))]
+ko_matrix <- matrix[rownames(ko$de), grep("spl2|3KO", colnames(matrix))]
+ko_matrix <- ko_matrix[, c(grep("2i", colnames(ko_matrix)), grep("Epi", colnames(ko_matrix)))]
+
 
 sets_union <- table(rownames(wt$de) %in% rownames(ko$de))[['TRUE']]
 wt_total <- nrow(wt$de)
