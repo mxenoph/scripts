@@ -27,6 +27,7 @@ get_annotation <- function (assembly){# {{{
 
     if(file.exists(genes)){# {{{
         genes <- import(genes, asRangedData = FALSE)
+        names(genes) <- names(genes) <- genes$gene_id
         assign('genes', genes, envir = globalenv())
     } else {
         assert(genes, " file does not exist", !file.exists(genes))
@@ -35,6 +36,7 @@ get_annotation <- function (assembly){# {{{
     tss_window <- database[database$assembly == assembly, 'tss_window']
     if(file.exists(tss_window)){# {{{
         tss_window <- import(tss_window, asRangedData = FALSE)
+        names(tss_window) <- tss_window$gene_id
         assign('tss_window', tss_window, envir = globalenv())
 
         tss <- GRanges(seqnames(tss_window),
@@ -135,9 +137,7 @@ get_features <- function(host, dataset, assembly){# {{{
     return(list(exons=exons, introns=introns, genes=genes, genic=genic, intergenic=intergenic))
 }# }}}
 
-# {{{
-#match.annot <- function(grange, grfeat, feat){
-annotate_range <- function(gr, genomic_feature, label){
+annotate_range <- function(gr, genomic_feature, label, return_att = F){ # {{{
     x <- c('GenomicRanges', 'foreach')
     lapply(x, suppressMessages(library), character.only=T)
     library('parallel')
@@ -162,7 +162,16 @@ annotate_range <- function(gr, genomic_feature, label){
     
     mcols(gr)[as.numeric(names(q_attributes)), 'attributes'] <- unlist(q_attributes)
 
-    return(gr)
+    # If true it will return a list of identifiers for the features that overlap
+    # the input grange
+    if (return_att == T) {
+        attribute <- unlist(lapply(gr$attributes[!is.na(gr$attributes)],
+                                   function(x) unlist(lapply(unlist(strsplit(x, '; ')),
+                                                             function(y) unlist(strsplit(y, ':'))[1]))))
+        return(list(gr = gr, attribute = unique(attribute)))
+    } else {
+        return(gr)
+    }
 }
 # }}}
 
