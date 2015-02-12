@@ -1,15 +1,23 @@
  #!/usr/bin/env Rscript --slave
 
-options(warn=-1)
-suppressMessages(require(GenomicRanges))
-suppressMessages(require(rtracklayer))
-suppressMessages(require(plyr))
-suppressMessages(require(corrplot))
+# Parsing command line arguments and create output subdirectories# {{{
+library(argparse)
+library(tools)
+
+parser <-  ArgumentParser(description="Explore peak co-localization by correlation")
+parser$add_argument('-c', '--config', metavar= "file", required='True', type= "character", help= "TSV file with columns Condition (e.g. ESC-2i), factor (e.g. H3AC), peaks bed file")
+parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
+parser$add_argument('-l', '--label', type= "character", default=format(Sys.time(), "%d%b%Y"), help= "Give a label for the output")
+
+args <- parser$parse_args()
+# }}}}
+
+x <- c('GenomicRanges', 'rtracklayer', 'plyr', 'tools', 'corrplot')
+lapply(x, suppressMessages(library), character.only=T)
 source("~/source/Rscripts/ggplot-functions.R")
-options(warn=0)
 
 # Local functions# {{{
-cor.mtest <- function(mat, conf.level = 0.95) {
+cor.mtest <- function(mat, conf.level = 0.95) {# {{{
     # Initiate 3 matrices of same dimensions as the input mat.
     mat <- as.matrix(mat)
     n <- ncol(mat)
@@ -27,19 +35,41 @@ cor.mtest <- function(mat, conf.level = 0.95) {
         }
     }
     return(list(p.mat, lowCI.mat, uppCI.mat))
+}
+# }}}
+
+subset_by_cor <- function(mat, corr_cutoff=0.6){# {{{
+    m <- abs(mat) >= corr_cutoff
+    sets <- c()
+
+    for(i in 1:nrow(m)){
+       for(j in i:ncol(m)){
+              if(rownames(m)[i] == colnames(m)[j]){
+                  next
+              }else if(m[i,j]) {
+                  sets <- c(sets, paste(rownames(m)[i],colnames(m)[j], sep="-"))
+              }
+       }
+    }
+    return(sets)
 }# }}}
 
+# }}}
+
 # read files and combine binding profiles of factors with several data sets
-args <- commandArgs(trailingOnly= TRUE)
+#args <- commandArgs(trailingOnly= TRUE)
 
 # conf.txt colnames: factor\tfile
-conf <- read.table(args[1], header=T, sep="\t")
-name <- args[2]
-out_dir <- args[3]
-plot_dir <- file.path(out_dir, 'plots', '')
+#conf <- read.table(args[1], header=T, sep="\t")
+#name <- args[2]
+#out_dir <- args[3]
+#plot_dir <- file.path(out_dir, 'plots', '')
+#
 
 # This assumes it's mouse data. If not this has to be changed
-chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
+#chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
+
+conf <- read.table(args$config, header=T, sep="\t")
 
 # Running it interactively when conf is set manually requires as.character
 # otherwise it gives you factors
@@ -47,7 +77,7 @@ chr <- c(paste0('chr', 1:19), 'chrX', 'chrY')
 factors <- as.character(apply( conf[ , c('Condition', 'factor') ] , 1 , paste , collapse = ":" ))
 factors <- toupper(factors)
 
-grL <- GRangesList()
+grL <- GRangesList()# {{{
 for (indx in 1:length(conf[['file']])) {
 #    if (grepl('peaks', as.character(conf[['file']])[indx])){
 #        print(as.character(conf[['file']])[indx])
@@ -58,7 +88,7 @@ for (indx in 1:length(conf[['file']])) {
 #        head(ranges)
 #    }
     # Getting rid of tags in contigs if present
-    ranges <- subset(ranges, seqnames(ranges) %in% chr)
+    ranges <- ranges[seqnames(ranges) %in% seqlevels(ranges)[grep('chr', seqlevels(ranges))]]
 
     if (duplicated(factors)[indx]) {
         # merging multiple data sets for the same factor
@@ -67,10 +97,11 @@ for (indx in 1:length(conf[['file']])) {
           grL <- c(grL, GRangesList(ranges))
           names(grL)[length(grL)] <- factors[indx]
     }
-}
+}# }}}
 # since for some factors several datasets got combined use reduce to remove overlapping peaks
 grL = endoapply(grL, reduce)
 
+#all_ranges <- reduce(unlist(grL))
 all_ranges <- unlist(grL)
 #print('length', length(all_ranges))
 
@@ -86,7 +117,6 @@ for (indx in 1:length(names(grL))) {
 
 
 # Set correlation matrix colours
-#col <- rev(c("#67001F", "#B2182B", "#D6604D", "#F4A582", "#FDDBC7","#FFFFFF", "#D1E5F0", "#92C5DE", "#4393C3", "#2166AC", "#053061"))
 col <- rev(c("#67001F", "#B2182B", "#D6604D", "#F4A582", "#FDDBC7","#FFFFFF", "#D1E5F0", "#92C5DE", "#4393C3", "#2166AC", "#053061"))
 
 # Calculate correlation
@@ -159,4 +189,5 @@ legend('topright', c(names(label), paste0('Confidence level: ', conf.lev, ", p-v
 #
 
 dev.off()# }}}
+
 
