@@ -314,9 +314,6 @@ if args.gtf:
 
 norm_sub = dict()
 norm_sub_alt_feat = dict()
-print 'up to here all good'
-
-print len(args.ip)
 
 # Create genomic_signal objects that point to data files
 for i in range(len(args.ip)):
@@ -403,10 +400,8 @@ if args.bound:
     bound = ResultsTable(args.bound, import_kwargs=dict(index_col=0))
     # reindexing the bound dataframe 
     bound = bound.reindex_to(tsses, attribute = 'gene_id')
+    # Pass pp object to function and print within function
     signal_bound(norm_sub, bound, 2000, pp, expr=expr)
-#    pp.savefig(p1)
-#    pp.savefig(p2)
-#    pp.savefig(p3)
 
 pp.close()
 # }}}
