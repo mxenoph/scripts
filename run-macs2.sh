@@ -2,10 +2,10 @@
 
 BROAD=false;
 #run-macs2.sh #{{{
-usage() { echo "Usage: $0 [-i <IP bam>] [-c <Input bam>] [-p <ncores>] [-g <genome e.g.mm>] [-o <output_path>] [-s <sample name>] [-b <broad-boolean>]" 1>&2; exit 1; }
+usage() { echo "Usage: $0 [-i <IP bam>] [-c <Input bam>] [-o <output_path>] [-g <genome e.g.mm>] [-b <broad-boolean>]" 1>&2; exit 1; }
 
 # : means takes an argument but not mandatory (if mandatory will have to check after)
-options=':i:c:g:p:s:o:a:bh'
+options=':i:c:g:o:a:bh'
 while getopts $options option
 do
     case $option in
@@ -14,8 +14,6 @@ do
         g ) genome=${OPTARG} ;;
         o ) OUT=${OPTARG} ;;
         b ) BROAD=true ;;
-        p ) N_JOBS=${OPTARG} ;;
-        s ) SAMPLE=${OPTARG} ;;
         a ) ASSEMBLY=${OPTARG} ;;
         h ) usage ;;
         : ) echo "Missing option argument for -$OPTARG" >&2; usage ;;
@@ -34,8 +32,13 @@ fi
 
 base="$(basename "$ip")"
 # Removing file extension and add macs2
-target="${base%.*}.macs2"
+#target="${base%.*}.macs2"
+target="${base%.*}"
 options=''
+
+# make assembly mandatory and infer genome size/organism initials from that
+#genome=$(sed 's/[0-9]//g' <<< ${assembly} | tr '[:upper:]' '[:lower:]')
+
 
 # If control provided then will pass it to macs#{{{
 if [ ! -z "$CTRL" ]
@@ -49,26 +52,33 @@ fi
 # Controlling output directory#{{{
 if [ ! -z "$OUT" ]
 then
-    if [[ ! $OUT =~ \/macs$ ]]
+    if [[ ! $OUT =~ \/macs2$ ]]
     then 
-        OUT="$(readlink -m ${OUT})/macs"
-        mkdir -p $OUT
+        OUT="$(readlink -m ${OUT})/macs2"
+        #mkdir -p $OUT
     fi
-    options="$options --outdir $OUT"
+    #options="$options --outdir $OUT"
 else
-    options="$options --outdir $PWD"
+    OUT=$PWD/macs2
+    #options="$options --outdir $PWD"
 fi
 #}}}
 
 # Controlling peak shape#{{{
 if [ ${BROAD} == true ]
 then
+    OUT="$OUT/broad"
     options="$options --broad -q 0.05 --broad-cutoff 0.05"
 else
+    OUT="$OUT/sharp"
     options="$options -q 0.01 --call-summits"
 fi
 #}}}
 
+mkdir -p $OUT
+options="$options --outdir $OUT"
+# right version of macs is in the virtualenv
+#workon python2.7
 #Run macs
 macs2 callpeak \
     -t ${ip[*]} \
@@ -79,15 +89,19 @@ if [ ! -z "$CTRL" ] & [ ! -z "$ASSEMBLY" ]
 then
     ASSEMBLY=$(echo $ASSEMBLY | tr '[:upper:]' '[:lower:]')
     macs2 bdgcmp -t "${OUT}/${target}_treat_pileup.bdg" -c "${OUT}/${target}_control_lambda.bdg" \
-        -m subtract --outdir $OUT --o-prefix ${target}
+        -m subtract --outdir $OUT --o-prefix ${target} &
     
     # Adding track line to broadPeak
 
     if [ ${BROAD} == true ]
     then
         sed -i "1s/^/track type=broadPeak visibility=3 db=${ASSEMBLY} name=\"${target}_peaks.broadPeak\" description=\"${target} ${ASSEMBLY}\"/" ${OUT}/${target}_peaks.broadPeak
+        Rscript ~/source/convert-bed-plus-to-gtf.R -b ${OUT}/${target}_peaks.broadPeak -a ${ASSEMBLY} &
     fi
 
+    Rscript ~/source/convert-bed-plus-to-gtf.R -b ${OUT}/${target}_peaks.narrowPeak -a ${ASSEMBLY} &
+    # wait because I sent two jobs in the background and I need their output before proceeding
+    wait
     chrom_sizes=$(grep ${ASSEMBLY} /nfs/research2/bertone/user/mxenoph/genome_dir/assemblies-annotations.config | cut -f 3)
     bedGraphToBigWig ${OUT}/${target}_subtract.bdg ${chrom_sizes} ${OUT}/${target}_subtract.bw
 
