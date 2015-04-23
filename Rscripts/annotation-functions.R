@@ -1,5 +1,5 @@
 get_annotation <- function (assembly){# {{{
-    x <- c('testit', 'rtracklayer', 'GenomicRanges')
+    x <- c('rtracklayer', 'GenomicRanges')
     lapply(x, suppressMessages(library), character.only=T)
 
     assembly <- tolower(assembly)
