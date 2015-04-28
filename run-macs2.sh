@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
 BROAD=false;
+RELAXED=false;
 #run-macs2.sh #{{{
-usage() { echo "Usage: $0 [-i <IP bam>] [-c <Input bam>] [-o <output_path>] [-g <genome e.g.mm>] [-b <broad-boolean>]" 1>&2; exit 1; }
+usage() { echo "Usage: $0 [-i <IP bam>] [-c <Input bam>] [-o <output_path>] [-g <genome e.g.mm>] [-b <broad-boolean>] [-r <relaxed thresholds for IDR method>]" 1>&2; exit 1; }
 
 # : means takes an argument but not mandatory (if mandatory will have to check after)
-options=':i:c:g:o:a:bh'
+options=':i:c:g:o:a:rbh'
 while getopts $options option
 do
     case $option in
@@ -15,6 +16,7 @@ do
         o ) OUT=${OPTARG} ;;
         b ) BROAD=true ;;
         a ) ASSEMBLY=${OPTARG} ;;
+        r ) RELAXED=true ;;
         h ) usage ;;
         : ) echo "Missing option argument for -$OPTARG" >&2; usage ;;
         \?) echo "Unknown option: -$OPTARG" >&2; usage ;;
@@ -46,6 +48,11 @@ then
     # --bdg will output also bedgraph files for ip and control and --SPMR specifies that the
     # fragment profiles for the pileup are per million reads
     options="$options -c $CTRL --bdg --SPMR"
+    if [ ${RELAXED} == true ]
+    then
+        options="$options --to-large"
+    fi
+
 fi
 #}}}
 
@@ -68,10 +75,25 @@ fi
 if [ ${BROAD} == true ]
 then
     OUT="$OUT/broad"
-    options="$options --broad -q 0.05 --broad-cutoff 0.05"
+    if [ ${RELAXED} == false ]
+    then
+        options="$options --broad -q 0.05 --broad-cutoff 0.05"
+    else
+        # This uses p-values as the cutoff fro calling peaks. Should only use this option in
+        # an IDR analysis.
+        options="$options --broad -p 0.001 --broad-cutoff 0.005"
+    fi
 else
     OUT="$OUT/sharp"
-    options="$options -q 0.01 --call-summits"
+    if [ ${RELAXED} == false ]
+    then
+        options="$options -q 0.01 --call-summits"
+    else
+        # This uses p-values as the cutoff fro calling peaks. Should only use this option in
+        # an IDR analysis.
+        options="$options -p 0.001 --call-summits"
+    fi
+
 fi
 #}}}
 
@@ -85,7 +107,10 @@ macs2 callpeak \
     --g=$genome -n=$target \
     --verbose 0 $options
 
-if [ ! -z "$CTRL" ] & [ ! -z "$ASSEMBLY" ]
+if [ ${RELAXED} == true ]
+then
+    echo 'Skipping pileup'
+elif [ ! -z "$CTRL" ] & [ ! -z "$ASSEMBLY" ]
 then
     ASSEMBLY=$(echo $ASSEMBLY | tr '[:upper:]' '[:lower:]')
     macs2 bdgcmp -t "${OUT}/${target}_treat_pileup.bdg" -c "${OUT}/${target}_control_lambda.bdg" \
