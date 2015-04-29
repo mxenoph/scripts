@@ -34,8 +34,12 @@ fi
 
 base="$(basename "$ip")"
 # Removing file extension and add macs2
-#target="${base%.*}.macs2"
 target="${base%.*}"
+#if [ ${RELAXED} == true ]
+#then
+#    target="${base%.*}_IDR"
+#fi
+
 options=''
 
 # make assembly mandatory and infer genome size/organism initials from that
@@ -91,13 +95,13 @@ else
     else
         # This uses p-values as the cutoff fro calling peaks. Should only use this option in
         # an IDR analysis.
-        options="$options -p 0.001 --call-summits"
+        options="$options -p 0.001"
     fi
 
 fi
 #}}}
 
-mkdir -p $OUT
+#mkdir -p $OUT
 options="$options --outdir $OUT"
 # right version of macs is in the virtualenv
 #workon python2.7
