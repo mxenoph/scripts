@@ -130,6 +130,7 @@ get_features <- function(host, dataset, assembly){# {{{
     introns$ensembl_id <- names(introns)
     names(introns) <- NULL
 
+    export.gff3(genes, file.path(genome_path, paste0(assembly, '-genes')))
     export.gff3(exons, file.path(genome_path, paste0(assembly, '-exons')))
     export.gff3(introns, file.path(genome_path, paste0(assembly, '-introns')))
     export.gff3(intergenic, file.path(genome_path, paste0(assembly, '-intergenic')))
@@ -175,4 +176,19 @@ annotate_range <- function(gr, genomic_feature, label, return_att = F){ # {{{
 }
 # }}}
 
-
+# ToDo: get exons, introns, intergenic this way. Include it in get_features and write
+# to file so I don't have to call the get_features every time, but call get_annotation
+# http://stackoverflow.com/questions/29253412/finding-intergenic-regions
+#txdb = makeTranscriptDbFromBiomart(biomart="ensembl",
+#                    dataset="mmusculus_gene_ensembl",
+#                    transcript_ids=NULL,
+#                    circ_seqs=DEFAULT_CIRC_SEQS,
+#                    filters="",
+#                    id_prefix="ensembl_",
+#                    host="www.biomart.org",
+#                    port=80,
+#                    miRBaseBuild=NA)
+#genic = genes(txdb)
+#genic = reduce(genic, ignore.strand=T)
+#intergenic = gaps(genic)
+#intergenic <- intergenic[strand(intergenic) == "*"]
