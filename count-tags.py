@@ -27,7 +27,8 @@ parser.add_argument('--fs', required = False, default = 200, help = "Fragment si
 parser.add_argument('-u', '--upstream', required = False, default = 2000, help = "bp upstream of tss/peak centre")
 parser.add_argument('-d', '--downstream', required = False, default = 500, help ="bp downstream of tss/peak centre")
 parser.add_argument('-g', '--gtf', type = str,
-        default='/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/results/profiles/Mus_musculus.GRCm38.70.DExpression_set.gtf',
+        #default='/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/results/profiles/Mus_musculus.GRCm38.70.DExpression_set.gtf',
+        default = '/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf',
         help= 'GTF for the ensembl annotation.')
 parser.add_argument('-r', '--regions', type = str, help= 'BED file containing regions of interest.')
 parser.add_argument('-f', '--full', default = True, help="If set to true then count tags for gene/peak")
@@ -63,13 +64,22 @@ class ref:
     def get(self):    return self.obj
     def set(self, obj):      self.obj = obj
 
+def genes_generator(database):# {{{
+    """
+    Generator function to yield TSS +/- Kb of each annotated gene
+    """
+    for gene in database.features_of_type('gene'):
+        if (re.match('chr', gene.chrom)):
+            yield asinterval(gene)
+# }}}
+
 def gene_start_generator(database):# {{{
     """
     Generator function to yield TSS +/- Kb of each annotated gene
     """
-    for transcript in database.features_of_type('gene'):
-        if (re.match('chr', transcript.chrom)):
-            yield TSS(asinterval(transcript), upstream = args.upstream, downstream = args.downstream)
+    for gene in database.features_of_type('gene'):
+        if (re.match('chr', gene.chrom)):
+            yield TSS(asinterval(gene), upstream = args.upstream, downstream = args.downstream)
 # }}}
 
 def tss_generator(database):# {{{
@@ -143,11 +153,13 @@ def create_features():
     else:
         tss = pybedtools.BedTool(filename)
         
-    #filename = gff_filename.replace('.gtf', '.metaseq.genes.gtf')
-    #if not os.path.exists(genes_filename):
-    #    # A BedTool made out of a generator, and saved to file.
-    #    genes = pybedtools.BedTool(db.features_of_type('gene'))\
-            #            .saveas(filename)
+    filename = gff_filename.replace('.gtf', '.metaseq.genes.gtf')
+    if not os.path.exists(filename):
+        # A BedTool made out of a generator, and saved to file.
+        genes = pybedtools.BedTool(gff_filename)\
+                        .saveas(filename)
+    else:
+        genes = pybedtools.BedTool(filename)
                 
     suffix = '.metaseq.' + str(args.upstream) + '-gene_start-' + str(args.downstream) + '.gtf'
     filename = gff_filename.replace('.gtf', suffix)
@@ -159,8 +171,7 @@ def create_features():
         gene_start = pybedtools.BedTool(filename)
                 
     #tsses_1kb = tsses.slop(b=1000, genome='mm10', output = gff_filename.replace('.gtf', '.tss_1kb.gtf'))
-    # for looking at other features
-    return {'tss':tss, 'gene_start':gene_start}
+    return {'tss':tss, 'gene_start':gene_start, 'genes':genes}
 # }}}
 
 # }}}
@@ -186,6 +197,14 @@ def main():
 
         count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
                 features = features['tss'], description = str(args.upstream) + '-tss-' + str(args.downstream))
+
+        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+                features = features['genes'], description = 'genes' )
+        
+        if not args.regions:
+            print 'Regions not provided'
+        else:
+            'ToDo: read in the peaks and do similar analysis to genes'
 # }}}
 
 main()
