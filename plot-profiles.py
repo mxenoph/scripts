@@ -10,6 +10,7 @@ from __future__ import division
 import os, sys, argparse, re
 from time import gmtime, strftime
 import gffutils
+import numpy as np
 import pybedtools
 import metaseq
 from pylab import *
@@ -59,7 +60,7 @@ def most_common(lst):
     return max(set(lst), key=lst.count)
 
 # Plotting average enrichment -- geom_line# {{{
-def plot_average(array, window, pp, name = None):
+def plot_average(array, window, pp, name = None, feature_type = 'tss'):
     from matplotlib import pyplot as plt
     plt.rcParams['font.size'] = 11
     plt.rcParams['legend.scatterpoints'] = 1
@@ -67,18 +68,21 @@ def plot_average(array, window, pp, name = None):
     
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    n_samples = len(name)
-    colors = get_N_HexCol(n_samples)
     
     # for plotting more than one IP on the same plot, array should be a dictionaty
     # with keys the basename and values the normalised array
     if isinstance(array, dict):
+        n_samples = len(array.keys())
+        colors = get_N_HexCol(n_samples)
+
         for key in array.keys():
-            ax.plot(x, array.get(key).mean(axis=0), color=colors[arrays.keys().index(key)], label = key)
+            ax.plot(window, array.get(key).mean(axis=0), color=colors[array.keys().index(key)], label = key)
     elif name is not None:
         ax.plot(window, array.mean(axis=0), color = 'r', label = name)
         # Add a vertical line at TSS/gene-start
         ax.axvline(0, color='k', linestyle='--')
+    else:
+        print "You did not pass a name for the sample."
     
     # Add labels and legend
     ax.set_xlabel('Distance from ' + feature_type +' (bp)')
@@ -213,7 +217,7 @@ def signal_bound(norm_sub, subset, window, pp, **kwargs):# {{{
 
 # }}}
 
-def plot_tss(array, window, name, pp, order = None, features = None, feature_type = "Genes", expression = None):
+def plot_tss(array, window, name, pp, order = None, features = None, feature_type = "Genes", expression = None):# {{{
 
     def format_axes(figure, feature_type = 'tss', subsets = False, by= None, order = None):# {{{
         figure.line_axes.axis('tight')
@@ -308,7 +312,7 @@ def plot_tss(array, window, name, pp, order = None, features = None, feature_typ
         fig = format_axes(fig, feature_type = feature_type)
 
 
-    pp.savefig(fig)
+    pp.savefig(fig)# }}}
 
 # }}}
 
@@ -333,7 +337,10 @@ def main():
     for key in normalised_arrays.keys():
         basename = os.path.splitext(os.path.basename(key))[0]
         names.add(basename)
-
+    print names
+    tmp = {'genes':dict(), 'tss':dict(), 'gene_start':dict()}
+    windows_tmp = {'genes':dict(), 'tss':dict(), 'gene_start':dict()}
+    
     for x in names:
         from matplotlib.backends.backend_pdf import PdfPages
         # Create pdfpage object
@@ -343,35 +350,49 @@ def main():
         print npz
         
         for n in npz:
-            window = os.path.splitext(n)[1].replace(".", "")
-            if window != 'genes':
-                upstream, feature_type, downstream = re.search('(\d+)-(\w+)-(\d+)', window).groups()
-            else:
-                feature_type = 'genes'
-            
             print 'Plotting for %s' % n
-            import numpy as np
-            if feature_type == 'tss' or feature_type == 'gene_start':
+            window = os.path.splitext(n)[1].replace(".", "")
+            pattern = re.compile('(\d+)-(\w+)-(\d+)')
+            # matching will be empty if .genes.features or any other file not in upstream-feature-downstream format
+            matching = pattern.match(window)
+            
+            if matching:
+                upstream, feature_type, downstream = matching.groups()
                 # bins are of size 100bp in count-tags.py
                 x = np.linspace(-int(upstream), int(downstream), 100)
+                
                 # This should only return one file
                 features = [ os.path.join(args.path, f) for f in os.listdir(args.path) if re.match(re.escape(n) + r'.features',f) ][0]
                 features = pybedtools.BedTool(features)
 
-                if feature_type == 'gene_start':
-                    plot_tss(array = normalised_arrays.get(n), name = n, window = x,
-                            pp = pp,
-                            features = features,
-                            feature_type = feature_type,
-                            expression = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/deseq/2i_wt-ko_de.tsv')
-            elif feature_type == 'genes':
+#                if feature_type == 'gene_start':
+#                    plot_tss(array = normalised_arrays.get(n), name = n, window = x,
+#                            pp = pp,
+#                            features = features,
+#                            feature_type = feature_type,
+#                            expression = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/deseq/2i_wt-ko_de.tsv')
+#
+                if feature_type == 'tss':
+                    tmp['tss'][n] = normalised_arrays.get(n)
+                elif feature_type == 'gene_start':
+                    tmp['gene_start'][n] = normalised_arrays.get(n)
+
+            elif window == 'genes':
+                feature_type = 'genes'
                 # gene array goes from o) to 100% in bins of 100bp
                 x = np.linspace(0, 100, 100)
-                plot_tss(array = normalised_arrays.get(n), name = n, window = x,
-                        pp = pp,
-                        features = features,
-                        feature_type = feature_type,
-                        expression = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/deseq/2i_wt-ko_de.tsv')
+
+                features = [ os.path.join(args.path, f) for f in os.listdir(args.path) if re.match(re.escape(n) + r'.features',f) ][0]
+                features = pybedtools.BedTool(features)
+
+#                plot_tss(array = normalised_arrays.get(n), name = n, window = x,
+#                        pp = pp,
+#                        features = features,
+#                        feature_type = feature_type,
+#                        expression = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/deseq/2i_wt-ko_de.tsv')
+
+                tmp['genes'][n] = normalised_arrays.get(n)
+
             else:
                 print 'Unknown feature type for %s. Exiting now.' % n
                 pp.close()
@@ -380,7 +401,29 @@ def main():
         pp.close()
 
     # TODO: for replicates call plot_average
+    if True:
+        pp = PdfPages(plot_path + 'all' + '-profiles.pdf')
 
+        for key in tmp.keys():
+            # key %in% tss, gene_start, genes
+            window = [ w.split('.')[1] for w in tmp.get(key).keys() ]
+            print window
+            if len(set(window)) == 1:
+                print 'all the same'
+                pattern = re.compile('(\d+)-(\w+)-(\d+)')
+                # matching will be empty if .genes.features or any other file not in upstream-feature-downstream format
+                matching = pattern.match(window[0])
+                
+                if matching:
+                    upstream, feature_type, downstream = matching.groups()
+                    # bins are of size 100bp in count-tags.py
+                    x = np.linspace(-int(upstream), int(downstream), 100)
+                else:
+                    # gene array goes from o) to 100% in bins of 100bp
+                    x = np.linspace(0, 100, 100)
+                    
+                plot_average(tmp[key], x, pp = pp, feature_type = key)
+        pp.close()
     sys.exit()
         
 
