@@ -61,6 +61,17 @@ def most_common(lst):
 
 # Plotting average enrichment -- geom_line# {{{
 def plot_average(array, window, pp, name = None, feature_type = 'tss'):
+    def color_variant(hex_color, brightness_offset=1):
+        # http://chase-seibert.github.io/blog/2011/07/29/python-calculate-lighterdarker-rgb-colors.html
+        """ takes a color like #87c95f and produces a lighter or darker variant """
+        if len(hex_color) != 7:
+            raise Exception("Passed %s into color_variant(), needs to be in #87c95f format." % hex_color)
+        rgb_hex = [hex_color[x:x+2] for x in [1, 3, 5]]
+        new_rgb_int = [int(hex_value, 16) + brightness_offset for hex_value in rgb_hex]
+        new_rgb_int = [min([255, max([0, i])]) for i in new_rgb_int] # make sure new values are between 0 and 255
+        # hex() produces "0x88", we want just "88"
+        return "#" + "".join([hex(i)[2:] for i in new_rgb_int])
+
     from matplotlib import pyplot as plt
     plt.rcParams['font.size'] = 11
     plt.rcParams['legend.scatterpoints'] = 1
@@ -72,15 +83,42 @@ def plot_average(array, window, pp, name = None, feature_type = 'tss'):
     # for plotting more than one IP on the same plot, array should be a dictionaty
     # with keys the basename and values the normalised array
     if isinstance(array, dict):
-        n_samples = len(array.keys())
-        colors = get_N_HexCol(n_samples)
+        colors = get_N_HexCol(len(array.keys()))
+        # Remove _1 or _2 etc to get cell_condition-protein
+        proteins = [ re.sub(r'_\d{1}$', '', k.split('.')[0]) for k in sorted(array.keys()) ]
 
-        for key in array.keys():
-            ax.plot(window, array.get(key).mean(axis=0), color=colors[array.keys().index(key)], label = key)
+        # create a dictionary to hold colors used in the average plot
+        # All replicates have the same color but different shade
+        colors_per_protein = {}
+        counter = 0
+        for p in set(proteins):
+            reps = [x for x, library in enumerate(proteins) if p in library]
+
+            if len(reps) == 1:
+                colors_per_protein[sorted(array.keys())[x]] = colors[counter]
+            else:
+                offset = 1
+                for x in reps:
+                    colors_per_protein[sorted(array.keys())[x]] = color_variant(colors[counter], offset)
+                    # offset smaller than 50 doesn't allow distinction between replicates
+                    offset += 50
+
+            counter += 1
+
+        for key in sorted(array.keys()):
+
+            metaseq.plotutils.ci_plot(
+                    window,
+                    array.get(key),
+                    ax=ax,
+                    line_kwargs = dict(color=colors_per_protein.get(key), label = key),
+                    fill_kwargs = dict(color=colors_per_protein.get(key), alpha=0.3)
+                    )
     elif name is not None:
         ax.plot(window, array.mean(axis=0), color = 'r', label = name)
         # Add a vertical line at TSS/gene-start
         ax.axvline(0, color='k', linestyle='--')
+
     else:
         print "You did not pass a name for the sample."
     
@@ -88,136 +126,11 @@ def plot_average(array, window, pp, name = None, feature_type = 'tss'):
     ax.set_xlabel('Distance from ' + feature_type +' (bp)')
     ax.set_ylabel('Normalised average read coverage (per M mapped reads)')
     ax.legend(loc = 2, frameon = False, fontsize = 14, labelspacing = .3, handletextpad = 0.2)
+    
     pp.savefig(fig)
     # }}}
 
-# bound should be a all genes with 1 indicating bound and 0 not bound
-# TODO: replicates should be plotted together split by bound and not bound
-# add check if expression matrix provided and if so call signal_expr
-# kwargs = optional arguments
-def signal_bound(norm_sub, subset, window, pp, **kwargs):# {{{
-   # If expr object/dataframe not provided then set to none for the next checks
-    expr = kwargs.get('expr', None)
-
-    import numpy as np
-    from matplotlib import pyplot as plt
-
-    window = window / 2
-    #x = np.linspace(-window, window, 100)
-    x = np.linspace(-2000, 1000, 100)
-    
-    n_samples = len(norm_sub.keys())
-    colors = get_N_HexCol(n_samples)
-
-#    for key in norm_sub.keys():
-#        normalized_subtracted = norm_sub.get(key)
-#        
-#        fig_simple = metaseq.plotutils.imshow(
-#                normalized_subtracted,
-#                x=gene_start,
-#                # Increase the contrast by truncating the colormap
-#                # to 5th and 95th percentiles
-#                vmin=5,
-#                vmax=95,
-#                percentile=True,
-#                sort_by=normalized_subtracted.mean(axis=1),
-#                # tweak the line plot
-#                line_kwargs=dict(color='k'),
-#                fill_kwargs=dict(color='k', alpha=0.4))
-#        
-#        # auto-zoom axes
-#        fig_simple.line_axes.axis('tight')
-#        
-#        # draw a vertical line at zero on both axes
-#        for ax in [fig_simple.line_axes, fig_simple.array_axes]:
-#            ax.axvline(0, color='k', linestyle='--')
-#            # Label axe
-#            fig_simple.array_axes.set_ylabel("Genes")
-#            fig_simple.line_axes.set_ylabel("Average enrichment\n(IP - input)\nreads per million mapped reads")
-#            fig_simple.line_axes.set_xlabel("Distance from TSS (bp)")
-#            fig_simple.cax.set_ylabel("Enrichment\n(IP - input)\nreads per million mapped reads)");
-#            pp.savefig(fig_simple)
-#
-    fig = plt.figure()
-    # For all bound TSS
-    ax = fig.add_subplot(111)
-    heatmaps = dict()
-    norm_sub_bound = dict()
-    
-    gs = gene_start.filter(lambda: b.name in set.index)
-    # Converting numbers to strings and making a matrix to hold the information for bound/not# {{{
-    subset_by = [str(num) for num in subset.clusters]
-    subset_by = array(subset_by, dtype="|S32")
-
-    subset_order = ['3', '2', '1', '4', '5']
-    # }}}
-
-    for key in norm_sub.keys():
-        normalized_subtracted = norm_sub.get(key)
-
-        heatmaps[key]= metaseq.plotutils.imshow(normalized_subtracted,
-                x=x,
-                features=gs,
-                vmin=5, vmax=95, percentile=True,
-                # axis=1 means that mean is calculated on the rows
-#                sort_by=normalized_subtracted.mean(axis=1),
-                subset_by= subset_by,
-                subset_order=subset_order,
-                line_kwargs=[dict(color='k', label='1'),
-                    dict(color='r', label='2'),
-                    dict(color='r', label='3'),
-                    dict(color='r', label='4'),
-                    dict(color='r', label='5')],
-                fill_kwargs=[dict(color='k', alpha=0.3),
-                    dict(color='r', alpha=0.3),
-                    dict(color='r', alpha=0.3),
-                    dict(color='r', alpha=0.3),
-                    dict(color='r', alpha=0.3),
-                    ]
-                )
-        # adding labels to heatmap
-        metaseq.plotutils.add_labels_to_subsets(heatmaps[key].array_axes, subset_by=subset_by, subset_order=subset_order,)
-        # adding labels to average signal plot
-        heatmaps[key].line_axes.legend(loc='best', frameon=False)
-#        heatmaps[key].suptitle(key + "\n(Bound genes: " + str(len(subset[subset_by=='Bound'])) + ' )')
-        pp.savefig(heatmaps[key])
-
-        # bound.bound ==1 returns a TRUE/FALSE vector and it's in the same order as the tsses
-        # that used to make the normalized_subtracted array, hence order is the same
-        normalized_subtracted = normalized_subtracted[(subset.boolean==1).values, :]
-        color = colors[norm_sub.keys().index(key)]
-
-        metaseq.plotutils.ci_plot(x,
-                normalized_subtracted,
-                ax = ax,
-                line_kwargs=dict(color= color, label=key),
-                fill_kwargs=dict(color= color, alpha=0.3))
-
-        norm_sub_bound[key]= normalized_subtracted
-
-    ax.set_xlabel('Distance from ' + 'TSS' +' (bp)')
-    ax.set_ylabel('Normalised average read coverage (per million mapped reads)')
-    ax.set_title('Subset: Bound')
-    ax.legend(loc=2, frameon=False, fontsize=8, labelspacing=.3, handletextpad=0.2)
-    fig.tight_layout()
-    pp.savefig(fig)
-
-    try:
-        expr
-    # if expr is None that means no argument expr was provided to this function
-    except None:
-        print "Plotting signal only for bound genes."
-    else:
-        expr_subset = expr.loc[bound[subset.boolean==1].index]
-        axes = signal_expr(norm_sub_bound, expr_subset, window*2, ' (Bound + DE)')
-        pp.savefig(axes);
-
-#    return (fig, axes)
-
-
-# }}}
-
-def plot_tss(array, window, name, pp, order = None, features = None, feature_type = "Genes", expression = None):# {{{
+def plot_tss(array, window, name, pp, subsets = None, features = None, feature_type = "Genes", expression = None):# {{{
 
     def format_axes(figure, feature_type = 'tss', subsets = False, by= None, order = None):# {{{
         figure.line_axes.axis('tight')
@@ -249,16 +162,47 @@ def plot_tss(array, window, name, pp, order = None, features = None, feature_typ
             'figsize':(10, 15),
             }
 
-    if order is None:
-        arguments['sort_by'] = array.mean(axis=1)
-        print "No order provided"
-    else:
+    if features is not None and subsets is not None:# {{{
         from metaseq.results_table import ResultsTable
-        order = ResultsTable(args.order, import_kwargs=dict(index_col=0))
-        order = order.reindex_to(features, attribute='gene_id')
-        arguments['sort_by'] = order.index
-       # gs = gene_start.filter(lambda b: b.name in sets.index)
-       # print "N of TSS in subset:", len(gs)
+        subsets = ResultsTable(subsets, import_kwargs=dict(index_col=0))
+        # file needs to have 2 columns, gene_id and group
+        groups = subsets.group.unique()
+        features_from_groups = subsets.index
+        subsets = subsets.reindex_to(features, attribute='gene_id')
+        cls = np.zeros(len(array)).astype('str')
+
+        subset = []
+        for g in groups:
+            subset.append((g, (subsets.group == g).values))
+        
+        subset.append(('UNK group', ~(subsets.index.isin(features_from_groups))))
+        subset = tuple(subset)
+
+        for label, ind in subset:
+            cls[ind] = label
+        assert sum(cls == '0.0') == 0
+
+        # Features found in the gtf used to construct the array 
+        # but not described in subsets are set to UNK group
+        groups = np.append(groups, 'UNK group')
+        # Saving groups and subsets to arguments for plotutils
+        arguments['subset_by'] = cls
+        arguments['subset_order'] = sorted(groups)
+
+        arguments['line_kwargs'] = []
+        arguments['fill_kwargs'] = []
+        colors = get_N_HexCol(len(groups))
+
+        for i, g in enumerate(groups):
+            arguments['line_kwargs'].append(dict(color=colors[i], label = g))
+            arguments['fill_kwargs'].append(dict(color=colors[i], alpha = 0.3))
+
+        #arguments['sort_by'] = subsets.index
+        # gs = gene_start.filter(lambda b: b.name in sets.index)
+        # print "N of TSS in subset:", len(gs)
+    elif expression is None:
+        arguments['sort_by'] = array.mean(axis=1)
+        print "No subsets provided"# }}}
     
     if features is not None and expression is not None: # {{{
         print "Subsetting based on expression"
@@ -292,7 +236,7 @@ def plot_tss(array, window, name, pp, order = None, features = None, feature_typ
         arguments['fill_kwargs'] = [dict(color='#f57900', alpha = 0.3),
                             dict(color='#8f5902', alpha = 0.3),
                             dict(color='#000000', alpha = 0.3)]
-    else:
+    elif subsets is None:
         print 'Features not provided'
         arguments['line_kwargs'] = dict(color='k')
         arguments['fill_kwargs'] = dict(color='k', alpha=0.3)
@@ -307,6 +251,8 @@ def plot_tss(array, window, name, pp, order = None, features = None, feature_typ
 
 
     if features is not None and expression is not None:
+        fig = format_axes(fig, feature_type = feature_type, subsets = True, by = arguments['subset_by'], order = arguments['subset_order'])
+    elif features is not None and subsets is not None:
         fig = format_axes(fig, feature_type = feature_type, subsets = True, by = arguments['subset_by'], order = arguments['subset_order'])
     else:
         fig = format_axes(fig, feature_type = feature_type)
@@ -385,11 +331,12 @@ def main():
                 features = [ os.path.join(args.path, f) for f in os.listdir(args.path) if re.match(re.escape(n) + r'.features',f) ][0]
                 features = pybedtools.BedTool(features)
 
-#                plot_tss(array = normalised_arrays.get(n), name = n, window = x,
-#                        pp = pp,
-#                        features = features,
-#                        feature_type = feature_type,
+                plot_tss(array = normalised_arrays.get(n), name = n, window = x,
+                        pp = pp,
+                        features = features,
+                        feature_type = feature_type,
 #                        expression = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/deseq/2i_wt-ko_de.tsv')
+                        subsets = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/test-order.tsv')
 
                 tmp['genes'][n] = normalised_arrays.get(n)
 
@@ -407,7 +354,6 @@ def main():
         for key in tmp.keys():
             # key %in% tss, gene_start, genes
             window = [ w.split('.')[1] for w in tmp.get(key).keys() ]
-            print window
             if len(set(window)) == 1:
                 print 'all the same'
                 pattern = re.compile('(\d+)-(\w+)-(\d+)')
@@ -425,7 +371,6 @@ def main():
                 plot_average(tmp[key], x, pp = pp, feature_type = key)
         pp.close()
     sys.exit()
-        
 
 # }}}
 
