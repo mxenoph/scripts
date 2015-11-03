@@ -13,6 +13,7 @@ args = parser$parse_args()
 
 output_path = file.path(args$out)
 plot_path = file.path(output_path, 'plots')
+dir.create(plot_path, recursive= TRUE)
 # }}}}
 
 x = c('GenomicRanges', 'rtracklayer', 'plyr', 'tools', 'corrplot')
@@ -108,7 +109,7 @@ peaks = endoapply(peaks, reduce)
 # }}}
 
 all_peaks = reduce(unlist(peaks))
-all_peaks = unlist(peaks)
+#all_peaks = unlist(peaks)
 
 # binary table with all binding sites for the TFs in the config file
 all_peaks_binary = rep(0, length(all_peaks) * length(names(peaks)))
@@ -157,7 +158,7 @@ pdf(file.path(plot_path, paste0(args$label, "-CorrelationPlot.pdf")), paper='a4'
              order="hclust", tl.col="black", tl.cex=0.5,
              addrect=4, col=colorRampPalette(col)(200))# }}}
 
-    corrplot(M.hc, method="color", type="lower",# {{{
+    corrplot(M.hc, method="color", type = "lower",# {{{
              order="original", tl.col=tlcol, tl.cex=0.5,
              addrect=5, col=colorRampPalette(col)(200))
     legend('topright', names(label), text.col=as.character(label), bty='n')# }}}
@@ -169,12 +170,12 @@ pdf(file.path(plot_path, paste0(args$label, "-CorrelationPlot.pdf")), paper='a4'
              addrect=9, col=colorRampPalette(col)(200))
     legend('topright', names(label), text.col=as.character(label), bty='n')# }}}
 
-    #corrplot.mixed(M, lower="color", upper="number",# {{{
-    #         #order="original", tl.col=tlcol, tl.cex=0.3, tl.srt=45,
-    #         order="hclust", tl.col=tlcol, tl.cex=0.3, tl.srt=45,
-    #         addrect=4, col=colorRampPalette(col)(200))
-    #
-    #legend('topleft', names(label), text.col=as.character(label), bty='n')# }}}
+    corrplot.mixed(M, lower = "color", upper = "number", # {{{
+#             order="original", tl.col=tlcol, tl.cex=0.3, tl.srt=45,
+             order="hclust", tl.col=tlcol, tl.cex=0.3, tl.srt=45,
+             addrect=4, col=colorRampPalette(col)(200))
+    
+    legend('topleft', names(label), text.col=as.character(label), bty='n')# }}}
 
     # Combine with a significant test. Provide the matrix of correlation but also a matrix of p-val for all correlations computed# {{{# {{{
     # sig.level is the top value a p-val is considered significant
@@ -183,7 +184,7 @@ pdf(file.path(plot_path, paste0(args$label, "-CorrelationPlot.pdf")), paper='a4'
              tl.col=tlcol, tl.cex=0.5,
              insig="pch", pch.cex=0.7,
              addrect=4, col=colorRampPalette(col)(200))
-    legend('topright', c(names(label), paste0('Confidence level: ', conf_lev, ", p-val < ", p_cutoff)),
+    legend('topright', c(names(label), paste0('Confidence level: ', conf_level, ", p-val < ", p_cutoff)),
            text.col=c(as.character(label), 'black'), bty='n')# }}}# }}}
 
     #corrplot(M, method="color", type="lower",# {{{
