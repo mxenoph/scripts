@@ -61,7 +61,7 @@ fi
 # -p <n> launches parallel search threads => Always bsub it with -n 4
 bowtie -m 1 -S -p 4 $GENOME $fastq > ${OUT}${describer}.sam
 # Keeping a record of how the files in the directory where generated
-echo -e `date +"%D%t%T"` "\t" "bowtie -m 1 -S $GENOME $fastq > ${OUT}${describer}.sam" >> ${OUT}FilesTree.log
+#echo -e `date +"%D%t%T"` "\t" "bowtie -m 1 -S $GENOME $fastq > ${OUT}${describer}.sam" >> ${OUT}FilesTree.log
 
 # TODO: add more peak callers if ever need to use a different one
 
@@ -70,11 +70,11 @@ samtools view -bS ${OUT}${describer}.sam -o ${OUT}${describer}.uns.bam
 #echo -e `date +"%D%t%T"` "\t" "samtools view -bS ${OUT}${describer}.sam -o ${OUT}${describer}.uns.bam" >> ${OUT}FilesTree.log
 
 # Sort BAM
-samtools sort ${OUT}${describer}.uns.bam ${OUT}${describer}.sort
+samtools sort ${OUT}${describer}.uns.bam ${OUT}${describer}
 #echo -e `date +"%D%t%T"` "\t" "samtools sort ${OUT}${describer}.uns.bam ${OUT}${describer}.sort" >> ${OUT}FilesTree.log
 
 # Sort BAM
-samtools index ${OUT}${describer}.sort.bam
+samtools index ${OUT}${describer}.bam
 #echo -e `date +"%D%t%T"` "\t" "samtools index ${OUT}${describer}.sort.bam" >> ${OUT}FilesTree.log
 
 # Regardless of whether the file was compressed to begin with, compress it
