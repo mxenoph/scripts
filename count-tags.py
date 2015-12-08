@@ -27,7 +27,6 @@ parser.add_argument('--fs', required = False, default = 200, help = "Fragment si
 parser.add_argument('-u', '--upstream', required = False, default = 2000, help = "bp upstream of tss/peak centre")
 parser.add_argument('-d', '--downstream', required = False, default = 500, help ="bp downstream of tss/peak centre")
 parser.add_argument('-g', '--gtf', type = str,
-        #default='/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/results/profiles/Mus_musculus.GRCm38.70.DExpression_set.gtf',
         default = '/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf',
         help= 'GTF for the ensembl annotation.')
 parser.add_argument('-r', '--regions', type = str, help= 'BED file containing regions of interest.')
@@ -39,11 +38,10 @@ if not args.out_dir.endswith(os.sep):
     args.out_dir = args.out_dir + os.sep
 
 args.out_dir = args.out_dir + 'profiles/'
-plot_dir = args.out_dir + 'plots/'
 
 # Create plot directory if it doesn't exist
-if not os.path.exists(plot_dir):
-    os.makedirs(plot_dir)
+if not os.path.exists(args.out_dir):
+    os.makedirs(args.out_dir)
 
 pattern = re.compile(".*[I|i]nput.*")
 # Remove any control files passed as ip accidentally
@@ -115,9 +113,11 @@ def count_tags (ip, ctrl, features, description):
         
         # Create arrays in parallel
         print "Building the IP array for %s using %s processors" % (basename, processes)
-        ip_array = ip.array(features, bins = 100, processes = processes, fragment_size = args.fs)
+        #ip_array = ip.array(features, bins = 100, processes = processes, fragment_size = int(args.fs))
+        ip_array = ip.array(features, bins = 100, processes = processes, shift_width = int(args.fs)/2)
         print "Building the input array for %s using %s processors" % (basename, processes)
-        ctrl_array = ctrl.array(features, bins = 100, processes = processes, fragment_size = args.fs)
+        #ctrl_array = ctrl.array(features, bins = 100, processes = processes, fragment_size = int(args.fs))
+        ctrl_array = ctrl.array(features, bins = 100, processes = processes, shift_width = int(args.fs)/2)
         
         # Normalize to library size
         ip_array /= ip.mapped_read_count() / 1e6
