@@ -1,10 +1,10 @@
 #!/bin/bash
 
 #run-bowtie.sh #{{{
-usage() { echo "Usage: $0 [-f <fastq>] [-g <genome index directory>] [-o <output directory>]" 1>&2; exit 1; }
+usage() { echo "Usage: $0 [-f <fastq>] [-g <genome index directory>] [-o <output directory>] [-t threads; default = 4] [-c parent folder of FASTQC generated folder]" 1>&2; exit 1; }
 
 # : means takes an argument but not mandatory (if mandatory will have to check after)
-options=':f:g:o:t:h'
+options=':f:g:o:t:c:h'
 while getopts $options option
 do
     case $option in
@@ -12,6 +12,7 @@ do
         g ) GENOME=(${OPTARG}) ;;
         o ) OUT=${OPTARG} ;;
         t ) THREADS=${OPTARG} ;;
+        c ) FASTQC=${OPTARG} ;;
         h ) usage ;;
         : ) echo "Missing option argument for -$OPTARG" >&2; usage ;;
         \?) echo "Unknown option: -$OPTARG" >&2; usage ;;
@@ -63,7 +64,15 @@ then
     fastq=${fastq/.gz/}
 fi
 
-encoding=$(cat $fastq | awk '(NR%4)==0 {if($0 ~ /[0-9%]/) {print "--phred33-quals"; exit} else if(($0 ~ /[J-Z]/) || ($0 ~ /[:lower:]/)) {print "--phred64-quals"; exit} }')
+fastqc_report=${FASTQC}/$(basename ${fastq/.f*/_fastqc})
+if [ -e "${fastqc_report}/fastqc_data.txt" ]
+then
+    encoding=$(awk -F '\t' '$0 ~ /^Encoding/ {if($2 ~ /Sanger/) {print "--phred33-quals"; exit } else{"--phred64-quals"; exit} }' ${fastqc_report}/fastqc_data.txt)
+else
+    # most new data are PHRED+33 so use it as default but check if mapping crashes
+    encoding="--phred33-quals"
+fi
+
 # TODO: add more options if ever get PE reads for ChIP-seq or if I align RNA-Seq 
 # with bowtie instead of gsnap (not gapped alignment)
 # -p <n> launches parallel search threads => Always bsub it with -n 4
