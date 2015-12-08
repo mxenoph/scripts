@@ -11,7 +11,8 @@ parser$add_argument('-b', '--bed', metavar= "file", nargs = "+", required='True'
 parser$add_argument('-i', '--overlap', type= "character", default = -1,
                     help= "Keep regions that overlap by this percentage. If not provided default is -1, to use 1bp overlap.")
 parser$add_argument('-p', '--threads', default = 4, help= "Number of processors to use")
-parser$add_argument('-o', '--output_path', help= "Output path")
+parser$add_argument('-o', '--output_path', required='True', help= "Output path")
+parser$add_argument('-l', '--label', default = "NA", help= "Output path")
 
 args = parser$parse_args()
 
@@ -100,39 +101,28 @@ get_merged = function(input_granges, min_ov = 0){
     
     ## merge the ranges in 'input_granges' that are connected via one or more hits in 'hits'.
     merged_ranges = merge_connected_ranges(input_granges, hits)
-    groups = characterlist(mclapply(mcols(merged_ranges)$revmap,
+    groups = CharacterList(mclapply(mcols(merged_ranges)$revmap,
                                     function(x){
                                         x = mixedsort(unique(values(input_granges[x])[['protein']]))
                                         if (length(x) != 1) {
-                                            x = paste(x, collapse = "_and_")
+                                            x = paste(x, collapse = "_AND_")
                                         }
                                         return(x)
                                     }, mc.cores = 4))
-    mcols(merged_ranges)$group = groups
+    mcols(merged_ranges)$name = groups
     # if group name contains _and_ then range is merged from connected tf ranges
-    multiple = grepl("*_and_*", groups)
+    multiple = grepl("*_AND_*", groups)
     multiple_peaks = merged_ranges[multiple]
     single_peaks = merged_ranges[!multiple]
     return(GRangesList('annotated' = merged_ranges, 'merged' = multiple_peaks, 'single' = single_peaks))
 } # }}}
 
-main = function(){
-    print('in main')
-    source("/homes/mxenoph/source/Rscripts/granges-functions.R")
-    source("/homes/mxenoph/source/Rscripts/plotting-functions.R")
-    library(GenomicRanges)
-    library(dplyr)
-    library(stringr)
-    library(tidyr)
-    library(gtools)
-
-
     # Make venn count table# {{{
     make_venn_cnt = function(granges){
         stopifnot(is(granges, "GenomicRanges"))
-        stopifnot(any(grepl('Group', colnames(mcols(granges)))))
+        stopifnot(any(grepl('name', colnames(mcols(granges)))))
 
-        sets = levels(as.factor(unlist(mcols(granges)$Group)))
+        sets = levels(as.factor(unlist(mcols(granges)$name)))
         columns = sets[grep('_AND_', sets, invert=T)]
         x = lapply(1:length(columns), function(x) c(0,1))
         names(x) = columns
@@ -143,7 +133,7 @@ main = function(){
             current_TF = columns[as.logical(unlist(mat[i,]))]
             if(length(current_TF) == 1) {
                 regex = paste0("^", current_TF, "$")
-                counts_table = table(grepl(regex, mcols(granges)$Group))
+                counts_table = table(grepl(regex, mcols(granges)$name))
                 # if no single peaks for that TF, table will not have a TRUE element
                 # so set the count to 0 like this
                 if (! TRUE %in% names(counts_table)) {
@@ -154,7 +144,7 @@ main = function(){
             } else {
                 tmp = paste(mixedsort(current_TF), collapse = "_AND_")
                 regex = paste0("^", tmp, "$")
-                counts_table = table(grepl(regex, mcols(granges)$Group))
+                counts_table = table(grepl(regex, mcols(granges)$name))
                 if (! TRUE %in% names(counts_table)) {
                     Counts = c(Counts, 0)
                 } else {
@@ -166,10 +156,19 @@ main = function(){
         return(mat)
     }# }}}
 
-    #chip_path = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/before_22.9/macs2/macs2/sharp"
-    #TF_data = list.files(pattern = "*[2i]*.narrowPeak", path = chip_path, full.name = T)
+main = function(){# {{{
+    source("/homes/mxenoph/source/Rscripts/granges-functions.R")
+    source("/homes/mxenoph/source/Rscripts/plotting-functions.R")
+    library(GenomicRanges)
+    library(dplyr)
+    library(stringr)
+    library(tidyr)
+    library(gtools)
+    library(rtracklayer)
 
     # Prepare the data# {{{
+    if(length(args$bed) < 2) stop("Two or more sets of regions need to be provided.")
+
     protein_data = as.data.frame(args$bed)
     colnames(protein_data) = 'protein_data'
 
@@ -195,34 +194,16 @@ main = function(){
     # means that user has defined a minimum percentage of overlap
     if(args$overlap != -1){
         merged = get_merged(gr0, min_ov = args$overlap)
+        overlap = paste0(args$overlap, 'perc')
+    } else {
+        overlap = '1bp'
+        merged = get_merged(gr0)
     }# }}}
-    
-    esc = a$merged
-    mcols(esc) = rep('NuRD_ESC', length(esc))
-    colnames(mcols(esc)) = 'TF'
-    hits = findOverlaps(gr0)
-
-    # Merge the ranges in 'gr0' that are connected via one or more hits in 'hits'.
-    # {{{
-    gr1 = mergeConnectedRanges(gr0, hits)
-
-    groups = CharacterList(mclapply(mcols(gr1)$revmap,
-                                    function(x){
-                                        x = mixedsort(unique(values(gr0[x])[['protein']]))
-                                        if (length(x) != 1) {
-                                            x = paste(x, collapse = "_AND_")
-                                        }
-                                        return(x)
-                                    }, mc.cores = ncores))# }}}
-
-    mcols(gr1)$Group = groups
-    # if group name contains _AND_ then range is merged from connected protein ranges
-    multiple = grepl("*_AND_*", groups)
-    multiple_peaks = gr1[multiple]
-    single_peaks = gr1[!multiple]
 
     # Computing and plotting venn diagram# {{{
-    venn_cnt = make_venn_cnt(gr1)
+#    granges = merged$annotated
+#    venn_cnt = make_venn_cnt(granges)
+    venn_cnt = make_venn_cnt(merged$annotated)
     v = venn_counts2venn(venn_cnt)
 
     target = paste0("Condition_", 
@@ -230,7 +211,8 @@ main = function(){
                            .[[1]] %>% as.character() %>% unique()), collapse = "_AND_"),
                     "_Proteins_",
                     paste0((protein_data %>% dplyr::select(protein) %>%
-                           .[[1]] %>% as.character() %>% unique()), collapse = "_AND_"))
+                           .[[1]] %>% as.character() %>% unique()), collapse = "_AND_"), 
+                    "_Ov", overlap)
 
     pdf(file.path(plot_path, paste0(target, ".pdf")))
     # Draw circles for 2 sets (ncol will be 3 because of the count column)
@@ -242,83 +224,23 @@ main = function(){
     # 1            1   3621
     if(ncol(venn_cnt) == 3){
         plot(v[['vn']], doWeights=TRUE, type="circles", gp = v[['theme']])
-    } else {
+    } else if(ncol(venn_cnt) == 5) {
+        # ellipses only work for 4 sets and easier to read than chowRusjey so draw that too
         plot(v[['vn']], doWeights=FALSE, type="ellipses", gp = v[['theme']])
+    } else {
         plot(v[['vn']], doWeights=T, type="ChowRuskey",  gp = v[['theme']])
     }
     dev.off()# }}}
 
-
-    chip_path = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/new/macs2/sharp"
-    epi_data = list.files(pattern = "7E12_EpiSC.*filtered_peaks.narrowPeak", path = chip_path, full.name = T, ignore.case = T)
-    epi_data = data.frame(file = epi_data)
-    idr_path = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/new/IDR"
-    esc_data = list.files(pattern = "*2i.*filtered.*narrowPeak", path = idr_path, full.name = T)
-    esc_data = data.frame(file = esc_data)
-    df = rbind(esc_data, epi_data)
-
-    tmp = df %>% .[[1]] %>% as.character() %>%
-        basename() %>% file_path_sans_ext %>% str_replace_all("_filtered_peaks", "") %>%
-        str_replace_all("_conservative.*", "") %>% strsplit("-")
-    tmp = do.call(rbind.data.frame, tmp)
-    colnames(tmp) = c('condition', 'TF')
-    df = cbind(df, tmp)
-
-    esc_df = lapply(df[['file']], function(x) {
-                    tmp = df %>% filter(file == x) %>% unite(id, condition, TF, sep="-") %>% dplyr::select(id) %>% .[[1]]
-                    x = import_narrowPeak_df(as.character(x))
-                    tmp = rep(tmp, nrow(x))
-                    x %>% mutate(TF = tmp) })
-    names(esc_df) = df %>% unite(id, condition, TF, sep = '-') %>% dplyr::select(id) %>% .[[1]]
-
-
-
-    gr0 = do.call(rbind, esc_df[grepl('2i', names(esc_df))])
-    # make the grange outside of function as it maybe from broadPeak and not narrowPeak
-    gr0 = with(gr0 %>% mutate(strand=gsub('.', '*', strand), summit=start+summit),
-               GRanges(chr, IRanges(start,end), strand, qvalue=qvalue, fe=fe, summit=summit, TF=TF))
-    # NuRD in ESCs
-    a = get_merged(gr0, min_ov = 0)
-
-    gr0 = do.call(rbind, esc_df[!grepl('2i', names(esc_df))])
-    # make the grange outside of function as it maybe from broadPeak and not narrowPeak
-    gr0 = with(gr0 %>% mutate(strand=gsub('.', '*', strand), summit=start+summit),
-               GRanges(chr, IRanges(start,end), strand, qvalue=qvalue, fe=fe, summit=summit, TF=TF))
-    b = get_merged(gr0, min_ov = 0)
-
-    esc = a$merged
-    mcols(esc) = rep('NuRD_ESC', length(esc))
-    colnames(mcols(esc)) = 'TF'
-
-    epi = b$merged
-    mcols(epi) = rep('NuRD_EpiSC', length(epi))
-    colnames(mcols(epi)) = 'TF'
-
-    gr0 = c(esc, epi)
-    esc_epi = get_merged(gr0, min_ov = 0)
-    epi_only = esc_epi$annotated[grepl("^NuRD_EpiSC$", mcols(esc_epi$annotated)[['Group']])]
-
-    venn_cnt = make_venn_cnt(esc_epi$annotated)
-    v = venn_counts2venn(venn_cnt)
-    pdf('test-ESC-Epi.pdf')
-    plot(v[['vn']], doWeights=TRUE, type="circles", gp = v[['theme']])
-    dev.off()
-
-    source("~/source/Rscripts/annotation-functions.R")
-    get_annotation('mm10')
-    tmp = epi_only
-    mcols(tmp) = paste(seqnames(tmp), start(tmp), end(tmp), sep = '_')
-    tss_with_name = as.data.frame(mcols(tss_window)['gene_id'])
-    tss_with_name = tss_with_name %>% left_join(as.data.frame(mcols(genes)[c('gene_id','gene_name')]), by = 'gene_id')
-    mcols(tss_window) = tss_with_name
-    epi_only_annotated = annotatePeakInBatch(epi_only, AnnotationData = tss_window)
-
-    keep =  as.data.frame(epi_only_annotated) %>%
-            filter(!insideFeature %in% c("upstream", "downstream")) %>%
-            mutate(gene_id = feature) %>%
-            left_join(as.data.frame(mcols(genes)[c('gene_id', 'gene_name')]), by = "gene_id")
-    write.table(keep, file = "NuRD_EpiSC_only_tss_overlap", col.names= TRUE, row.names = FALSE, sep = "\t", quote = F)
-    library(rtracklayer)
-}
+    # if user provides a label use that to rename the metadata of the merged file
+    if(args$label != "NA"){
+        print('Label provided - using that in BED file.')
+        tmp = merged$merged
+        name = data.frame(name = rep(args$label, length(tmp)))
+        values(tmp) = cbind(values(tmp), name)
+        export.bed(tmp, con = file.path(args$output_path, paste0(target, '.bed')))
+    }
+    export.bed(merged$annotated, con = file.path(args$output_path, paste0(target, '_complete_annotated.bed')))
+}# }}}
 
 main()
