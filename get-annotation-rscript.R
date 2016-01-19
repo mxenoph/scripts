@@ -18,10 +18,8 @@ args = parser$parse_args()
 ncores = args$threads
 # }}}
 
-#}}}
-
 get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
-
+    print('In get_features')
     # Load packages# {{{
     library(GenomicFeatures)
     library(GenomicRanges)
@@ -104,6 +102,16 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
                       biomart = 'ENSEMBL_MART_ENSEMBL',
                       dataset = paste0(organism, "_gene_ensembl"))
 
+    ensembl2gene_name = getBM(attributes = c("ensembl_gene_id", "external_gene_id"), mart=ensembl)
+    write.table(ensembl2gene_name, paste0(output, ".ensembl2gene_name", ".tsv"), sep="\t", quote=FALSE, col.names=T, row.names=F)
+    
+    protein_coding_table = getBM(attributes=c('ensembl_transcript_id', 'ensembl_gene_id', 'transcript_biotype'),
+                                 filters ='biotype',
+                                 values = ebiotypes[ebiotypes$Class == 'protein_coding', 'transcript_biotype'],
+                                 mart = ensembl)
+    write.table(protein_coding_table,
+               paste0(output, ".protein_coding_ids", ".tsv"), sep="\t", quote=FALSE, col.names=T, row.names=F)
+
     # One can retrieve transcripts start and ends with biomaRt but will have to retrieve exon length
     # for exons in each transcript to calculate transcript length. transcriptLenghts from GenomicFeatures 
     # correctly handle this. Transcript length is needed to find the canonical transcript
@@ -150,7 +158,7 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
     transcripts_gr = format_features(transcripts)
 
     canonical_transcripts_gr = transcripts_gr[transcripts_gr$ensembl_transcript_id %in% canonical_transcripts$ensembl_transcript_id,]
-
+    print('finding canonical trx')
     # Exons # {{{
     exons = getBM(attributes = c("ensembl_gene_id",
                                  "chromosome_name",
@@ -163,6 +171,7 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
     exons_gr = GRangesList(format_features(exons, reduce = T, label = 'exon'))
     # }}}
     
+    print('finding exons')
     # Genes # {{{
     genes = getBM(attributes = c("ensembl_gene_id",
                                  "chromosome_name",
@@ -173,8 +182,9 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
     genes_gr = format_features(genes)
     # }}}
 
+    print('finding genes')
     # Introns # {{{
-    introns_gr = mclapply(names(exons_gr), function(x){
+    introns_gr = lapply(names(exons_gr), function(x){
                        features = BiocGenerics::setdiff(genes_gr[x], exons_gr[[x]])
                        features= sort(features)
                        if(length(features) != 0) {
@@ -185,20 +195,25 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
                            }
                        }
                        return(features)
-                  }, mc.cores = ncores)
+                  })
 
     names(introns_gr) = names(exons_gr)
    # }}}
 
-    # Intergenic # {{{
+    print('finding introns')
+
+   # Intergenic # {{{
     genic = genes_gr
     strand(genic) = '*'
     genic = reduce(genic)
 
     chromosomes = as(seqinfo(genic),'GRanges')
-    intergenic = setdiff(chromosomes, genic)
+    intergenic = GenomicRanges::setdiff(chromosomes, genic)
+    # required for proper convertion to bed
+    intergenic$id = 1:length(intergenic)
     # }}}
     
+    print('finding intergenic')
     promoter_window = data.frame('upstream' = c(5000, 2000), 'downstream' = c(2000, 500))
     for(x in 1:nrow(promoter_window)){
         # Using trim to deal with chrM (circular) which will give negative start()
@@ -224,7 +239,7 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
                                      print(paste0(".rtracklayer-", promoter_window[x, 'upstream'],
                                                   "-canonical_tss-", promoter_window[x, 'downstream'])),
                                      ".gtf"))
-    }
+   }
 
     # Writing to file
     # For saving I can't use list so convert to granges object
@@ -241,7 +256,7 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
     introns_gr$ensembl_id = names(introns_gr)
     names(introns_gr) = NULL
     export.gff3(introns_gr, paste0(output, ".rtracklayer-introns", ".gtf"))
-    export.gff3(introns_gr[which(introns_gr$exon_no == "intron_1")], paste0(output, ".rtracklayer-first-intron", ".gtf"))
+    export.gff3(introns_gr[which(introns_gr$intron_no == "intron_1")], paste0(output, ".rtracklayer-first-intron", ".gtf"))
    
     export.gff3(intergenic, paste0(output, ".rtracklayer-intergenic", ".gtf"))
     export.gff3(canonical_transcripts_gr, paste0(output, ".rtracklayer-canonical-transcripts", ".gtf"))
@@ -303,7 +318,7 @@ main = function(){# {{{
                                              biomart = 'ENSEMBL_MART_ENSEMBL')) %>%
                         separate(dataset, into = c("Organism", "suffix_1", "suffix_2"), sep = "_") %>%
                         dplyr::select(-suffix_1, -suffix_2)
-
+    
     target = gsub(".gtf", "", args$gtf)
     get_features(archive = archive, organism = organism, output = target)
 
