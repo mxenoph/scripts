@@ -35,6 +35,28 @@ for(f in args$file){
                                fail = fail,
                                more_mult = more_mult
                                )
+
+    # Saving calculations on stats (uniq without ddup counts included) and whether samples need # {{{
+    # downsampling. 1 means no and any other number means downsample to that percentage to
+    # establish same depth with other reps in the group condition-protein
+    tmp = bowtie %>% mutate(tmp = file_path_sans_ext(filename)) %>%
+                separate(tmp, into=c('condition','protein'), sep ='-') %>%
+                mutate(condition = gsub('Remco', '', condition), protein = gsub("_.*", '', protein)) %>% 
+                unite(tmp, condition, protein, sep='-') 
+                
+    summarised = tmp %>% group_by(tmp) %>%
+                    summarise(group_median = median(unique))
+
+    tmp = tmp %>% left_join(summarised, by = 'tmp') %>%
+        mutate(index = group_median / unique,
+               downsample = ifelse(round(index, digits = 2) < 0.7, round(index, digits = 1),
+                                   ifelse(round(index, digits = 2) > 1.3, 'seq. depth < group median', 1))) %>%
+        select(filename, fail, more_mult, unique, duplicated, all, group_median, index, downsample)
+
+    write.table(tmp,
+                file.path(output_path, 'alignment-summarised-stats.tsv'), sep="\t", row.names = F, quote = F)
+    # }}}
+
     plot_data = melt((bowtie %>% select(filename, fail, more_mult, unique, duplicated, all)), id = 'filename')
     plot_data = plot_data %>% tidyr::separate(filename, into = c("condition", "protein"), sep="-" ) %>%
                 mutate(protein = gsub(".stderr", "", protein),
