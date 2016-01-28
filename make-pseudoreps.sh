@@ -50,8 +50,8 @@ cat ${output_path}/${target}.sam_header ${output_path}/${target}.sam_PG_line ${o
 samtools view -bSo ${output_path}/${target}00.bam ${output_path}/${target}00.sam
 samtools view -bSo ${output_path}/${target}01.bam ${output_path}/${target}01.sam
 
-#rm ${output_path}/${target}00.sam
-#rm ${output_path}/${target}01.sam
-#rm ${output_path}/${target}.sam_PG_line
-#rm ${output_path}/${target}.sam_header
+rm ${output_path}/${target}00.sam
+rm ${output_path}/${target}01.sam
+rm ${output_path}/${target}.sam_PG_line
+rm ${output_path}/${target}.sam_header
 
