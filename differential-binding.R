@@ -6,6 +6,7 @@ select = dplyr::select
 library(argparse)
 library(tools)
 source("~/source/Rscripts/annotation-functions.R")
+source("~/source/Rscripts/granges-functions.R")
 
 parser =  ArgumentParser(description="Perform differential binding analysis")
 parser$add_argument('-s', '--sheet', metavar= "file", required='True', type= "character", help= "Sample sheet must have SampleID,Condition,Treatment,Replicate,bamReads,bamControl,Peaks (last 3 are the path to the respective bed files)")
@@ -16,7 +17,8 @@ parser$add_argument('-o', '--out', metavar= "path", type= "character", default= 
 
 args = parser$parse_args()
 
-output_path = file.path(args$out, 'DiffBind')
+label = file_path_sans_ext(basename(args$sheet))
+output_path = file.path(args$out, 'DiffBind', label)
 plot_path = file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 #}}}
@@ -24,6 +26,7 @@ dir.create(plot_path, recursive= TRUE)
 # Load Packages
 library(DiffBind)
 library(dplyr)
+library(tidyr)
 # For str_replace_all function
 library(stringr)
 # For mixedsort
@@ -78,32 +81,70 @@ import_data = function(cnf_df){
 }
 # }}}
 
-# doing all the work # {{{
+# Differential Binding Analysis: doing all the work # {{{
 differential_binding = function (cnf, protein){
     tmp = import_data(cnf)
     config = tmp[['cnf_df']]
     peakset = tmp[['peakset']]
-    
+
     # Using only this peak caller data, a correlation heatmap can be generated 
     # which gives an initial clustering of the samples
     pdf(file.path(plot_path, paste0(protein, '.pdf')))
-    plot(peakset)
-    peakset = dba.peakset(peakset, consensus = -DBA_REPLICATE, minOverlap = 2)
+    # if only using one peak file then dba.plotHeatmap will throw error for soem reason
+    # as correlations will all be 1
+    if (length(levels(factor(cnf[['Peaks']]))) > 1 ) {
+        # For this plot clustering is based on peak scores. Peaks identified somewhere
+        # in the experiment, but not called for a specific sample, will have a missing 
+        # score (set to -1), so the score vectors being correlating may be quite sparse
+        dba.plotHeatmap(peakset, main = 'Correlation on peak scores (from peak caller)')
+        # Adding consensus peaks for all conditions-proteins that are the same and only
+        # differ in terms of replicates
+        peakset = dba.peakset(peakset, consensus = -DBA_REPLICATE, minOverlap = 0.5)
+        dba.count = function (...)
+            DiffBind::dba.count(..., minOverlap = 0.5)
+    } else {
+        x = unique(cnf[['Peaks']])
+        if (file_ext(x) == 'narrowPeak') {
+            peaks_gr = import_narrowPeak(x)
+        } else if (file_ext(x) == 'broadPeak') {
+            peaks_gr = import_broadPeak(x)
+        }
+        peakset = dba.peakset(peakset, consensus = -DBA_REPLICATE, minOverlap = 1)
+        dba.count = function (...)
+            DiffBind::dba.count(..., minOverlap = 0)
+    }
 
+    ov_rate = dba.overlap(peakset, mode=DBA_OLAP_RATE)
+    # If this curve drops off too quickly (worse than geometric), that indicates that there
+    # is little agreement between the peaksets called for each sample
+    p = ggplot(data.frame(common = ov_rate, sets = 1:length(ov_rate)), aes(y=common, x=sets)) + geom_point(shape=19) + geom_line()
+    p + xlab('# peaksets') + xlab("# common peaks") + ggtitle(protein) + theme_classic()
+
+    # https://support.bioconductor.org/p/63466/
+    # DBA_SCORE_TMM_READS_EFFECTIVE normalizes to the number of reads actually overlapping peaks 
+    # (should only be used if you expect most of the peaks to have similar binding levels)
+    # DBA_SCORE_TMM_READS_FULL, which will normalize to the overall depth of sequencing in each library
     counts = dba.count(peakset, score = DBA_SCORE_TMM_MINUS_FULL,
-#    counts = dba.count(peakset, score = DBA_SCORE_READS_MINUS,
-                       minOverlap = 2,
+                       # only include peaks in at least this many peaksets
+#                       minOverlap = 2,
 #                       peaks = peakset$masks$Consensus,
-#                       bRemoveDuplicates = TRUE,
+                       # Assuming bam file is ddup
+                       # bRemoveDuplicates = TRUE,
                        bScaleControl = TRUE, bParallel = TRUE,
                        bCorPlot = FALSE)
-    plot(counts)
+    dba.plotHeatmap(counts, main = 'Correlation on peak read count score')
+    dba.plotHeatmap(counts, main = 'Correlation on peak read count score', correlations=F)
     dev.off()
 
     contrast = dba.contrast(counts, categories = DBA_CONDITION, minMembers = 2)
     
     diff_bound = dba.analyze(contrast, method = DBA_DESEQ2,
-                             bSubControl= TRUE, bFullLibrarySize = TRUE,
+                             # indicating control reads are subtracted
+                             bSubControl= TRUE,
+                             # full library size used for normalization, effective library size
+                             # normalization is preferred if binding levels are expected to be similar
+                             # between samples
+                             bFullLibrarySize = TRUE,
                              bTagwise = TRUE,
                              bParallel = TRUE,
                              bCorPlot = FALSE)
@@ -112,54 +153,7 @@ differential_binding = function (cnf, protein){
         comparison = paste(protein,
                            contrast$contrasts[[index]]$name1,
                            contrast$contrasts[[index]]$name2, sep='-')
-        pdf(file.path(plot_path, paste0(comparison, '.pdf')))
-
-        dba.plotMA(diff_bound, contrast = index, method = DBA_DESEQ2,
-                   th = 0.05, bUsePval = FALSE )
-
-        dba.plotPCA(diff_bound, contrast = index, method = DBA_DESEQ2,
-                    th = 0.05, bUsePval = FALSE,
-                    label = DBA_ID)
-
-        groups_pvals = dba.plotBox(diff_bound, contrast = index, method = DBA_DESEQ2, bAll = TRUE, pvalMethod = NULL)
-
-        dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
-                        contrast = index,
-                        # Threshold will be FDR and not pval
-                        bUsePval = FALSE,
-                        score = DBA_SCORE_TMM_MINUS_FULL,
-                        th = 0.05)
-
-        dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
-                        contrast = index,
-                        # Threshold will be FDR and not pval
-                        bUsePval = FALSE,
-                        score = DBA_SCORE_TMM_MINUS_FULL,
-                        correlations=FALSE,
-                        th = 0.05)
-
-        dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
-                        contrast = index, mask = diff_bound$masks$All,
-                        # Threshold will be FDR and not pval
-                        bUsePval = FALSE,
-                        score = DBA_SCORE_TMM_MINUS_FULL,
-                        correlations=FALSE,
-                        th = 0.05)
-        dev.off()
         
-        results =  dba.report(diff_bound, method = DBA_DESEQ2,
-                              contrast = index,
-                              # add count data for individual samples
-                              bCounts = TRUE,
-                              # only include sites with an absolute Fold value greater than equal
-                              # fold= 2
-                              # Threshold will be FDR and not pval
-                              bUsePval = FALSE,
-                              th = 0.05)
-
-        write.table(as.data.frame(results),
-                    file = file.path(output_path, paste0(comparison, '-db.tsv')), sep="\t", quote=FALSE, row.names=FALSE)
-
         # write report with all sites irrespective if differentially bound or not
         results =  dba.report(diff_bound, method = DBA_DESEQ2,
                               contrast = index,
@@ -171,8 +165,61 @@ differential_binding = function (cnf, protein){
                               bUsePval = FALSE,
                               th = 1)
         write.table(as.data.frame(results),
-                    file = file.path(output_path, paste0(comparison, '.tsv')), sep="\t", quote=FALSE, row.names=FALSE)
+                    file = file.path(output_path,
+                                     paste0(comparison, '.tsv')), sep="\t", quote=FALSE, row.names=FALSE)
+        
+        results =  dba.report(diff_bound, method = DBA_DESEQ2,
+                              contrast = index,
+                              # add count data for individual samples
+                              bCounts = TRUE,
+                              # only include sites with an absolute Fold value greater than equal
+                              # fold= 2
+                              # Threshold will be FDR and not pval
+                              bUsePval = FALSE,
+                              th = 0.05)
+        
+        # So that the function doesn't crush for cases where no db detected 
+        if( length(results) != 0 ) {
+        
+            write.table(as.data.frame(results),
+                        file = file.path(output_path,
+                                         paste0(comparison, '-db.tsv')), sep="\t", quote=FALSE, row.names=FALSE)
+            
+            pdf(file.path(plot_path, paste0(comparison, '.pdf')))
 
+            dba.plotMA(diff_bound, contrast = index, method = DBA_DESEQ2,
+                       th = 0.05, bUsePval = FALSE )
+
+            dba.plotPCA(diff_bound, contrast = index, method = DBA_DESEQ2,
+                        th = 0.05, bUsePval = FALSE,
+                        label = DBA_ID)
+
+            groups_pvals = dba.plotBox(diff_bound, contrast = index, method = DBA_DESEQ2, bAll = TRUE, pvalMethod = NULL)
+
+            dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
+                            contrast = index,
+                            # Threshold will be FDR and not pval
+                            bUsePval = FALSE,
+                            score = DBA_SCORE_TMM_MINUS_FULL,
+                            th = 0.05)
+
+            dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
+                            contrast = index,
+                            # Threshold will be FDR and not pval
+                            bUsePval = FALSE,
+                            score = DBA_SCORE_TMM_MINUS_FULL,
+                            correlations=FALSE,
+                            th = 0.05)
+
+            dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
+                            contrast = index, mask = diff_bound$masks$All,
+                            # Threshold will be FDR and not pval
+                            bUsePval = FALSE,
+                            score = DBA_SCORE_TMM_MINUS_FULL,
+                            correlations=FALSE,
+                            th = 0.05)
+            dev.off()
+        }
     }
 }
 # }}}
