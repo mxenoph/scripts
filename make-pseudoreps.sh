@@ -44,14 +44,14 @@ samtools view -H ${bam} > ${output_path}/${target}.sam_header
 # In the last sed command using @ as the delimiter instead of / because $command (which is expanded in the substitution) contains / and so sed thinks the command ends before it actually does
 tail -n 1 ${output_path}/${target}.sam_header | grep '@PG' | sed 's/ID:.*\tVN/ID:shuf-split\tVN/g' | sed 's/VN:.*CL/VN:unk\tCL/' | sed "s@CL:.*@CL:\"$command\"@g" > ${output_path}/${target}.sam_PG_line
 
-cat ${output_path}/${target}.sam_header ${output_path}/${target}.sam_PG_line ${output_path}/${target}00 > ${output_path}/${target}00.sam
-cat ${output_path}/${target}.sam_header ${output_path}/${target}.sam_PG_line ${output_path}/${target}01 > ${output_path}/${target}01.sam
+for i in `seq 0 $((NUM - 1))`
+do
+    cat ${output_path}/${target}.sam_header ${output_path}/${target}.sam_PG_line ${output_path}/${target}0${i} > ${output_path}/${target}0${i}.sam
+    samtools view -bSo ${output_path}/${target}_pseudoreps0${i}.bam ${output_path}/${target}0${i}.sam
+    rm ${output_path}/${target}0${i}
+    rm ${output_path}/${target}0${i}.sam
+done
 
-samtools view -bSo ${output_path}/${target}00.bam ${output_path}/${target}00.sam
-samtools view -bSo ${output_path}/${target}01.bam ${output_path}/${target}01.sam
-
-rm ${output_path}/${target}00.sam
-rm ${output_path}/${target}01.sam
 rm ${output_path}/${target}.sam_PG_line
 rm ${output_path}/${target}.sam_header
 
