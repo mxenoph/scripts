@@ -45,13 +45,17 @@ for(f in args$file){
                 unite(tmp, condition, protein, sep='-') 
                 
     summarised = tmp %>% group_by(tmp) %>%
-                    summarise(group_median = median(unique))
+                    summarise(group_median_ddup = median(unique),
+                              group_median = median(mapped))
 
     tmp = tmp %>% left_join(summarised, by = 'tmp') %>%
-        mutate(index = group_median / unique,
+        mutate(index_ddup = group_median_ddup / unique,
+               downsample_ddup = ifelse(round(index_ddup, digits = 2) < 0.7, round(index_ddup, digits = 1),
+                                   ifelse(round(index_ddup, digits = 2) > 1.3, 'seq. depth < group median', 1)),
+               index = group_median / mapped,
                downsample = ifelse(round(index, digits = 2) < 0.7, round(index, digits = 1),
                                    ifelse(round(index, digits = 2) > 1.3, 'seq. depth < group median', 1))) %>%
-        select(filename, fail, more_mult, unique, duplicated, all, group_median, index, downsample)
+        select(filename, fail, more_mult, unique, duplicated, all, group_median_ddup, index_ddup, downsample_ddup, group_median, index, downsample)
 
     write.table(tmp,
                 file.path(output_path, 'alignment-summarised-stats.tsv'), sep="\t", row.names = F, quote = F)
