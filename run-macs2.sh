@@ -104,7 +104,6 @@ fi
 #mkdir -p $OUT
 options="$options --outdir $OUT"
 # right version of macs is in the virtualenv
-#workon python2.7
 #Run macs
 macs2 callpeak \
     -t ${ip[*]} \
@@ -114,27 +113,31 @@ macs2 callpeak \
 if [ ${RELAXED} == true ]
 then
     echo 'Skipping pileup'
-elif [ ! -z "$CTRL" ] & [ ! -z "$ASSEMBLY" ]
+elif [[ !( -z "$CTRL" ) &&  !( -z "$ASSEMBLY" ) ]]
 then
     ASSEMBLY=$(echo $ASSEMBLY | tr '[:upper:]' '[:lower:]')
     macs2 bdgcmp -t "${OUT}/${target}_treat_pileup.bdg" -c "${OUT}/${target}_control_lambda.bdg" \
-        -m subtract --outdir $OUT --o-prefix ${target} &
-    
-    # Adding track line to broadPeak
+        -m subtract --outdir $OUT --o-prefix ${target}
+    macs2 bdgcmp -t "${OUT}/${target}_treat_pileup.bdg" -c "${OUT}/${target}_control_lambda.bdg" \
+        -m logFE --outdir $OUT --o-prefix ${target} -p 0.00001
 
-    if [ ${BROAD} == true ]
-    then
-        sed -i "1s/^/track type=broadPeak visibility=3 db=${ASSEMBLY} name=\"${target}_peaks.broadPeak\" description=\"${target} ${ASSEMBLY}\"/" ${OUT}/${target}_peaks.broadPeak
-        Rscript ~/source/convert-bed-plus-to-gtf.R -b ${OUT}/${target}_peaks.broadPeak -a ${ASSEMBLY} &
-    fi
-
-    Rscript ~/source/convert-bed-plus-to-gtf.R -b ${OUT}/${target}_peaks.narrowPeak -a ${ASSEMBLY} &
-    # wait because I sent two jobs in the background and I need their output before proceeding
-    wait
     chrom_sizes=$(grep ${ASSEMBLY} /nfs/research2/bertone/user/mxenoph/genome_dir/assemblies-annotations.config | cut -f 3)
     bedGraphToBigWig ${OUT}/${target}_subtract.bdg ${chrom_sizes} ${OUT}/${target}_subtract.bw
+    bedGraphToBigWig ${OUT}/${target}_logFE.bdg ${chrom_sizes} ${OUT}/${target}_logFE.bw
+    
+    # Adding track line to broadPeak
+    if [ ${BROAD} == true ]
+    then
+        sed -i "1s/^/track type=broadPeak visibility=3 db=${ASSEMBLY} name=\"${target}_peaks.broadPeak\" description=\"${target} ${ASSEMBLY}\"\n/" ${OUT}/${target}_peaks.broadPeak
+        #Rscript ~/source/convert-bed-plus-to-gtf.R -b ${OUT}/${target}_peaks.broadPeak -a ${ASSEMBLY} &
+    fi
 
-    rm ${OUT}/${target}_treat_pileup.bdg ${OUT}/${target}_control_lambda.bdg ${OUT}/${target}_subtract.bdg
+    #Rscript ~/source/convert-bed-plus-to-gtf.R -b ${OUT}/${target}_peaks.narrowPeak -a ${ASSEMBLY} &
+
+    # Do not remove these files as 
+    bedGraphToBigWig ${OUT}/${target}_treat_pileup.bdg ${chrom_sizes} ${OUT}/${target}_treat_pileup.bw
+    bedGraphToBigWig ${OUT}/${target}_control_lambda.bdg ${chrom_sizes} ${OUT}/${target}_control_lambda.bw
+    echo rm ${OUT}/${target}_treat_pileup.bdg ${OUT}/${target}_control_lambda.bdg ${OUT}/${target}_subtract.bdg
 
 fi
 
