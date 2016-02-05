@@ -12,7 +12,8 @@ parser$add_argument('-i', '--overlap', type= "character", default = -1,
                     help= "Keep regions that overlap by this percentage. If not provided default is -1, to use 1bp overlap.")
 parser$add_argument('-p', '--threads', default = 4, help= "Number of processors to use")
 parser$add_argument('-o', '--output_path', required='True', help= "Output path")
-parser$add_argument('-l', '--label', default = "NA", help= "Output path")
+parser$add_argument('-l', '--label', default = "NA", help= "Useful when comparing complex in conditions. e.g 2i-NuRD:EpiSC-NuRD")
+parser$add_argument('-a', '--anno', default = "NA", help= "Rename the merged ranges to anno in output bed")
 
 args = parser$parse_args()
 
@@ -34,6 +35,20 @@ import_narrowPeak_df = function(narrow) {# {{{
     names(df) = c('chr', 'start', 'end', 'name', 'score', 'strand', 'fe', 'pvalue', 'qvalue', 'summit')
     return(df)
 }
+
+import_bed_df = function(bed) {# {{{
+    x = c('dplyr','GenomicRanges')
+    lapply(x, suppressMessages(library), character.only=T)
+    if (grepl('track', readLines(bed, n=1))){
+        # File contains track line for ucsc which we skip
+        df = read.table(bed, header=F, skip=1)
+    } else {
+        df = read.table(bed, header=F)
+    }
+    names(df) = c('chr', 'start', 'end', 'name', 'score', 'strand')
+    return(df)
+}
+#}}}
 #}}}
 
 # Extract clusters from Hits object.# {{{
@@ -172,24 +187,41 @@ main = function(){# {{{
     protein_data = as.data.frame(args$bed)
     colnames(protein_data) = 'protein_data'
 
-    tmp = protein_data %>% .[[1]] %>% as.character() %>%
-        basename() %>% file_path_sans_ext %>% str_replace_all("_peaks", "") %>% strsplit("-")
-    tmp = do.call(rbind.data.frame, tmp)
-    colnames(tmp) = c('condition', 'protein')
-    protein_data = cbind(protein_data, tmp)
+    if(args$label == "NA"){
+        tmp = protein_data %>% .[[1]] %>% as.character() %>%
+                basename() %>% file_path_sans_ext %>% str_replace_all("_peaks", "") %>% strsplit("-")
+        tmp = do.call(rbind.data.frame, tmp)
+        colnames(tmp) = c('condition', 'protein')
+        protein_data = cbind(protein_data, tmp)
+    } else {
+        if(!grepl(':', args$label)) stop("Labels must be ordered as the input files and separated by :")
+        tmp = data.frame(tmp = unlist(strsplit(args$label, ":"))) %>% separate(tmp, into = c('condition', 'protein'), sep='-')
+        protein_data = cbind(protein_data, tmp)
+    }
 
     proteins_df = lapply(protein_data[['protein_data']], function(x) {
                     tmp = protein_data %>% filter(protein_data == x) %>% unite(id, condition, protein, sep="-") %>% select(id) %>% .[[1]]
-                    x = import_narrowPeak_df(as.character(x))
+                    if(grepl('.bed', as.character(x))){
+                        x = import_bed_df(as.character(x))
+                    } else {
+                        x = import_narrowPeak_df(as.character(x))
+                    }
+                    x = x[,1:6]
                     tmp = rep(tmp, nrow(x))
                     x %>% mutate(protein = tmp) })
 # }}}
 
     # keep all peaks in one GRange object and find all overlaps# {{{
     gr0 = do.call(rbind, proteins_df)
-    # make the grange outside of function as it maybe from broadPeak and not narrowPeak
-    gr0 = with(gr0 %>% mutate(strand=gsub('.', '*', strand), summit=start+summit),
-               GRanges(chr, IRanges(start,end), strand, qvalue=qvalue, fe=fe, summit=summit, protein=protein))
+    print(head(gr0))
+    if(! 'summit' %in% colnames(gr0)){
+        gr0 = with(gr0 %>% mutate(strand=gsub('.', '*', strand)),
+                   GRanges(chr, IRanges(start,end), strand, score=score, protein=protein))
+    } else {
+        # make the grange outside of function as it maybe from broadPeak and not narrowPeak
+        gr0 = with(gr0 %>% mutate(strand=gsub('.', '*', strand), summit=start+summit),
+                   GRanges(chr, IRanges(start,end), strand, qvalue=qvalue, fe=fe, summit=summit, protein=protein))
+    }
 
     # means that user has defined a minimum percentage of overlap
     if(args$overlap != -1){
@@ -232,14 +264,14 @@ main = function(){# {{{
     }
     dev.off()# }}}
 
+    tmp = merged$merged
     # if user provides a label use that to rename the metadata of the merged file
-    if(args$label != "NA"){
+    if(args$anno != "NA"){
         print('Label provided - using that in BED file.')
-        tmp = merged$merged
-        name = data.frame(name = rep(args$label, length(tmp)))
-        values(tmp) = cbind(values(tmp), name)
-        export.bed(tmp, con = file.path(args$output_path, paste0(target, '.bed')))
+        values(tmp) = values(tmp)[,grep('name', colnames(values(tmp)), invert=T)]
+        tmp$name = args$anno
     }
+    export.bed(tmp, con = file.path(args$output_path, paste0(target, '.bed')))
     export.bed(merged$annotated, con = file.path(args$output_path, paste0(target, '_complete_annotated.bed')))
 }# }}}
 
