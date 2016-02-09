@@ -125,6 +125,13 @@ get_merged = function(input_granges, min_ov = 0){
                                         return(x)
                                     }, mc.cores = 4))
     mcols(merged_ranges)$name = groups
+    scores = unlist(mclapply(mcols(merged_ranges)$revmap,
+                                    function(x){
+                                        x = max(values(input_granges[x])[['score']])
+                                        return(x)
+                                    }, mc.cores = 4))
+    mcols(merged_ranges)$score = scores
+
     # if group name contains _and_ then range is merged from connected tf ranges
     multiple = grepl("*_AND_*", groups)
     multiple_peaks = merged_ranges[multiple]
@@ -260,7 +267,16 @@ main = function(){# {{{
         # ellipses only work for 4 sets and easier to read than chowRusjey so draw that too
         plot(v[['vn']], doWeights=FALSE, type="ellipses", gp = v[['theme']])
     } else {
-        plot(v[['vn']], doWeights=T, type="ChowRuskey",  gp = v[['theme']])
+#        plot(v[['vn']], doWeights=T, type="ChowRuskey",  gp = v[['theme']])
+        upsetR_cnt = do.call(rbind, apply(venn_cnt, 1, function(x) {
+                                              if(x['Counts'] != 0){
+                                                  y = as.data.frame(t(x)) %>% dplyr::select(-Counts)
+                                                  cnt = x['Counts']
+                                                  y[1:cnt,] = y[1,]
+                                                  return(y)
+                                              }
+                                    }))
+        upset(upsetR_cnt, order.by="freq", mb.ratio=c(0.7, 0.3))
     }
     dev.off()# }}}
 
