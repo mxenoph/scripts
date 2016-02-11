@@ -11,6 +11,9 @@ source("~/source/Rscripts/granges-functions.R")
 parser =  ArgumentParser(description="Perform differential binding analysis")
 parser$add_argument('-s', '--sheet', metavar= "file", required='True', type= "character", help= "Sample sheet must have SampleID,Condition,Treatment,Replicate,bamReads,bamControl,Peaks (last 3 are the path to the respective bed files)")
 parser$add_argument('-a', '--assembly', type= "character", default='mm10', help= "Give preferred assembly e.g. mm10. Default: mm10")
+parser$add_argument('-g', '--gtf', metavar= "file", type= "character",
+                    default = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.75.gtf",
+                    help= "GTF file. Looks for the rtracklayer generated gtfs for that annotation. If not found it runs get-annotation-rscript.R")
 parser$add_argument('-k', '--keep', type= "character", default='', help= "Factors to ignore for differential binding but plot")
 parser$add_argument('-d', '--de', metavar = "path", type= "character", default='', help= "Path to look for the list of de expressed genes")
 parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
@@ -151,8 +154,9 @@ differential_binding = function (cnf, protein){
 
     for (index in 1:length(contrast$contrasts)){
         comparison = paste(protein,
-                           contrast$contrasts[[index]]$name1,
-                           contrast$contrasts[[index]]$name2, sep='-')
+                           paste(contrast$contrasts[[index]]$name1,
+                                 contrast$contrasts[[index]]$name2, sep='-'),
+                           sep = '_')
         
         # write report with all sites irrespective if differentially bound or not
         results =  dba.report(diff_bound, method = DBA_DESEQ2,
@@ -224,29 +228,196 @@ differential_binding = function (cnf, protein){
 }
 # }}}
 
-# if working with meryem files just give one of the files (not the -de.tsv though)# {{{
-retrieve_annotation = function(fs){
+aggregate_counts = function(fs){ # {{{
+    first = TRUE
+    for (x in 1:length(fs)) {
+        tmp = read.delim(fs[x], head = T, sep = "\t", stringsAsFactors = F)
 
-    # If de files from Meryem, gene coordinates are in deseq files. # {{{
-    # No need to load get_annotation(assembly) to get gene coordinates
-    # chromosome names and strands needs to be changed
-    if(!missing(fs)){
-        fs = read.delim(fs, head = T, sep = "\t", stringsAsFactors = F)
-        source("~/source/Rscripts/granges-functions.R")
-        genes = with((fs %>% dplyr::select(chromosome_name:end_position)),
-                     GRanges(seqnames = chromosome_name,
-                             IRanges(start_position, end_position),
-                             strand = strand))
-        values(genes) = (fs %>% dplyr::select(starts_with("gene")))
-        names(genes) = genes$gene_id
-        genes = change_seqnames(genes)
-    } else {
-        #ToDO: load genes from get_annotation(assembly)
-    }
-    # }}}
-    return(genes)
+        rename_map = c(paste("FC", names(fs)[x], sep = "."),
+                       paste("FDR", names(fs)[x], sep = "."))
+        combine_by = c('seqnames', 'strand', 'start', 'end')
+        tmp = tmp %>% dplyr::select(seqnames:end, strand, Fold, FDR:ncol(.)) %>%
+              rename_(.dots = setNames(list("Fold", "FDR"), rename_map))
+
+        if(first) {# {{{
+            ofs = tmp
+            first = FALSE
+        } else {
+            ofs = inner_join(ofs, tmp, by = combine_by)
+            # since samples at h0 will be in all comparisons expression columns for those will be
+            # duplicated and dplyr add '.x' or '.y' to them depending from which df they came from
+            # remove extension, find duplicates and remove. This would work nicer with rename() but I
+            # can't get it to work on selected columns
+            colnames(ofs) = gsub("\\.x|\\.y$", "", colnames(ofs))
+            discard = ofs %>% names(.) %>% duplicated()
+            ofs = ofs[,!discard]
+        }
+    }# }}}
+    return(ofs)
 }
 # }}}
+
+# Prepare a data.frame containing counts/TMM for multiple conditions/samples for plotting# {{{
+# ca is the name for column annotation
+format_cdf = function(cdf, statistic = "FDR", ca = "Time", threshold = 0.05){
+    source("~/source/Rscripts/ggplot-functions.R")
+    # Significant changes between any samples in the cdf
+    significant = dplyr::select(cdf, contains(statistic)) %>% apply(1, function(x) min(x[!is.na(x)]) < threshold)
+
+    if(any(significant)) {
+        plot_data = cdf[significant,]
+        # Save because it is lost with dplyr
+        row_names = plot_data[['rowname']]
+        
+        # Row annotation needs to be defined before selecting columns
+        row_annotation = dplyr::select(plot_data, contains(statistic)) %>%
+                         mutate_each(funs(ifelse(. > 0.05 | is.na(.), 'non significant', 'significant')))
+        row_annotation = row_annotation %>% dplyr::select(one_of(rev(mixedsort(colnames(row_annotation)))))
+        rownames(row_annotation) = row_names
+
+        plot_data = plot_data %>% dplyr::select(-starts_with('FC'),
+                                                -starts_with(statistic),
+                                                -seqnames, -strand, -start, -end,
+                                                -rowname)
+
+        # Formatting time in row_annotation and plot_data and consequenctly column_annotation and ac# {{{
+        if(ca == "Time") {
+            convert_time = function(x) {
+                index = grepl('m', x)
+                values = x[index]
+                # R introduces X in front of the string if starting with number
+                values = gsub("^X", '', values)
+                values = as.numeric(gsub("m", '', values))
+                values = gsub("^", "h", as.character(values / 60))
+                return(list(index = index, values = values))
+            }
+            timepoints = data.frame(x =  gsub("^.*\\.", "", colnames(row_annotation))) %>%
+                            tidyr::separate(x, into = c("timepoint1", "timepoint2"), sep = '-')
+            x = convert_time(timepoints[['timepoint1']])
+            timepoints[['timepoint1']][x$index] = x$values
+
+            x = convert_time(timepoints[['timepoint2']])
+            timepoints[['timepoint2']][x$index] = x$values
+            colnames(row_annotation) = (timepoints %>% tidyr::unite(x, timepoint1, timepoint2, sep = "-") %>% .[[1]])
+
+            timepoints = data.frame(x = colnames(plot_data)) %>% tidyr::separate(x, into = c("timepoint", "factor", "rep"), sep="_")
+            x = convert_time(timepoints[['timepoint']])
+            timepoints[['timepoint']][x$index] = x$values
+            colnames(plot_data) = (timepoints %>% tidyr::unite(x, timepoint, factor, rep, sep = "_") %>% .[[1]])
+        }# }}}
+        
+        # Reordering row_annotation columns so that all comparison involving zero show up first on heatmap
+        row_annotation = row_annotation %>% select(one_of(mixedsort(names(.))))
+        plot_data = plot_data %>% dplyr::select(match(mixedsort(colnames(plot_data)), colnames(plot_data)))
+
+        plot_data = as.matrix(plot_data)
+        rownames(plot_data) = row_names
+
+        # Column names should be sample_rep with no '_' in "sample"
+        column_annotation = data.frame( x = gsub("_.*", '', colnames(plot_data)))
+        colnames(column_annotation) = ca
+        rownames(column_annotation) = colnames(plot_data)
+
+        color = c('slategrey', 'violetred')
+        anno_colors = lapply(1:ncol(row_annotation), function(x) c("non significant" = color[1],
+                                                                   "significant" = color[2]))
+        names(anno_colors) = colnames(row_annotation)
+
+        cool_colors = colorRampPalette(brewer.pal(9,"YlGnBu"))(8)
+        tmp = cool_colors[1:length(unique(column_annotation[[ca]]))]
+        names(tmp) = mixedsort(as.character(unique(column_annotation[[ca]])))
+        anno_colors[[ca]] = tmp
+
+        return(list(plot_data = plot_data,
+                    ra = row_annotation, ca = column_annotation,
+                    ac = anno_colors))
+    } else {
+        stop('No differentially bound regions.')
+    }
+} # }}}
+
+annotate = function(grange, annotations, output_path, target,# {{{
+                    priority = c('2000-gene_start-500', 'first-exon', 'active_enhancers',
+                                 'poised_enhancers', 'exons', 'first-intron', 'introns', 'genes')) {
+
+    stopifnot(is(grange, "GRanges"))
+    total = length(grange)
+
+    per_region = data.frame(closest_feature = rep(NA, total))
+    rownames(per_region) = names(grange)
+
+    per_feature = setNames(vector("list", length(priority)), priority)
+    bound = data.frame(Gene = character(0), Bound = character(0))
+    # '5000-tss-2000' contains all possible TSS for a gene
+    for (i in priority) {
+        ov = findOverlaps(annotations[[i]], grange)
+        # using names and not index as that will change when subsetting granges downstream
+        hits = names(grange)[(1:length(grange)) %in% unique(subjectHits(ov))]
+        per_region[hits, 'closest_feature'] = paste(per_region[hits, 'closest_feature'], i, sep=';')
+
+        n_overlapping = length(unique(subjectHits(ov)))
+        grange = grange[! names(grange) %in% hits ]
+        per_feature[[i]] = n_overlapping
+
+        print(paste0('Calculating %peaks overlapping ', i, '.', sep=''))
+
+        if(i %in% grep('enhancer', priority, invert=T, value=T)){
+            if(grepl('exon', i) || grepl('intron', i)) {
+                    x = 'ensembl_id'
+            } else {
+                    x = 'ensembl_gene_id'
+            }
+            # Even if queryHits are unique the Gene names might not be as grange has all possible TSS 
+            # for a gene
+            tmp = data.frame(Gene = unique(values(annotations[[i]][unique(queryHits(ov))])[[x]])) %>%
+                mutate(Bound = i)
+            # Find all genes that are not bound at a feature with higher priority
+            # Avoiding duplicated values in bound$Gene
+            tmp = anti_join(tmp, bound, by="Gene")
+            bound = dplyr::bind_rows(bound, tmp)
+        }
+    }
+    per_region[['closest_feature']] = gsub("^NA;", '',  per_region[['closest_feature']])
+
+    bound_table = data.frame(Gene = values(annotations[['genes']])[['ensembl_gene_id']]) %>% left_join(bound, by="Gene")
+    write.table(bound_table,
+                file = file.path(output_path, paste0(target,'.binding-per-gene.tsv')),
+                quote = F, row.names = F, sep="\t")
+    write.table(bound,
+                file = file.path(output_path, paste0(target,'.bound-genes-only.tsv')),
+                quote = F, row.names = F, sep="\t")
+
+    if(per_feature[['genes']] != 0){
+        stop('I find regions overlapping with genes even if tss, introns and exons have higher priority. Something went wrong')
+    } else {
+        per_feature = per_feature[which(names(per_feature)!='genes')]
+    }
+
+    per_feature[['intergenic']] = total - sum(unlist(per_feature))
+    per_feature = unlist(per_feature)
+    per_feature = per_feature / total
+    return(list(per_feature = per_feature, per_region = per_region))
+}
+# }}}
+
+# When wanting to retrieve a cluster call the function to get IDs in particular cluster# {{{
+# df = tmp$plot_data, regions = bdf
+get_cluster = function(results, k = NULL, output_path, label, id = "ID"){
+    # k must be equal to cutree_rows used in pheatmap for defining number of clusters
+    # http://stackoverflow.com/questions/27820158/pheatmap-in-r-how-to-get-clusters
+    if(!is.null(k)){
+        clusters = data.frame(cluster_no = cutree(results$tree_row, k = k))
+    } else {
+        clusters = data.frame(cluster_no = cutree(results$tree_row, k = 1))
+    }
+    heatmap_order = add_rownames(clusters[results$tree_row$order,,drop = F], var = id)
+    write.table(heatmap_order, file.path(output_path, paste0(label, '-heatmap_order.tsv')),
+                sep = "\t", col.names = T, row.names = F, quote = F)
+    return(heatmap_order)
+}
+# }}}
+
+
 
 # annotate genes and plot TPM and binding affinity for all de genes# {{{
 per_de_gene = function(comparisons){
@@ -312,6 +483,9 @@ per_de_gene = function(comparisons){
     }
 } # }}}
 
+
+# combine db regions with expression data for nearest gene, annotation = ensembl, jan2013 etc if not in_file # {{{
+combine_expression = function(comparisons, annotation = "in_file"){
 # anotate db sites and plot TPM for associated genes# {{{
 per_db_region = function(db_regions, deseq_results, pattern = 'Expression'){
     genes = retrieve_annotation(deseq_results)
@@ -383,9 +557,6 @@ per_db_region = function(db_regions, deseq_results, pattern = 'Expression'){
 #        ob = get_set_enrichment(gene_scores = gene_scores, bound = (select(annotated_df, gene_id) %>% .[[1]]), label = label)
 }
 # }}}
-
-# combine db regions with expression data for nearest gene, annotation = ensembl, jan2013 etc if not in_file # {{{
-combine_expression = function(comparisons, annotation = "in_file"){
     library(ChIPpeakAnno)
 
     scale_rows = function(tpms, pattern = regex("^Expression"), reverse_pattern = regex("^[^Expression]")){# {{{
@@ -425,135 +596,12 @@ combine_expression = function(comparisons, annotation = "in_file"){
 # }}}
 
 
-# Prepare a data.frame containing counts/TMM for multiple conditions/samples for plotting# {{{
-# ca is the name for column annotation
-format_cdf = function(cdf, statistic = "FDR", ca = "Time", threshold = 0.05){
-    # Significant changes between any samples in the cdf
-    significant = dplyr::select(cdf, contains(statistic)) %>% apply(1, function(x) min(x[!is.na(x)]) < threshold)
-    plot_data = cdf[significant,]
-    # Save because it is lost with dplyr
-    row_names = plot_data[['rowname']]
-    
-    # Row annotation needs to be defined before selecting columns
-    row_annotation = dplyr::select(plot_data, contains(statistic)) %>%
-                     mutate_each(funs(ifelse(. > 0.05 | is.na(.), 'non significant', 'significant')))
-    row_annotation = row_annotation %>% dplyr::select(one_of(rev(mixedsort(colnames(row_annotation)))))
-    rownames(row_annotation) = row_names
-
-    plot_data = plot_data %>% dplyr::select(-starts_with('log2FoldChange'),
-                                            -starts_with(statistic),
-                                            -seqnames, -strand, -start, -end,
-                                            -rowname)
-    plot_data = plot_data %>% dplyr::select(match(mixedsort(colnames(plot_data)), colnames(plot_data)))
-
-    plot_data = as.matrix(plot_data)
-    rownames(plot_data) = row_names
-
-    # Column names should be sample_rep with no '_' in "sample"
-    column_annotation = data.frame( x = gsub("_.*", '', colnames(plot_data)))
-    colnames(column_annotation) = ca
-    rownames(column_annotation) = colnames(plot_data)
-
-    source("~/source/Rscripts/ggplot-functions.R")
-    color = c('slategrey', 'violetred')
-    anno_colors = lapply(1:ncol(row_annotation), function(x) c("non significant" = color[1],
-                                                               "significant" = color[2]))
-    names(anno_colors) = colnames(row_annotation)
-
-    cool_colors = colorRampPalette(brewer.pal(9,"YlGnBu"))(8)
-    tmp = cool_colors[1:length(unique(column_annotation[[ca]]))]
-    names(tmp) = mixedsort(unique(column_annotation[[ca]]))
-    anno_colors[[ca]] = tmp
-
-    return(list(plot_data = plot_data,
-                ra = row_annotation, ca = column_annotation,
-                ac = anno_colors))
-} # }}}
-
-aggregate_count_data = function(fs, type = "binding"){ # {{{
-    flag = FALSE
-    for (x in 1:length(fs)) {
-        tmp = read.delim(fs[x], head = T, sep = "\t", stringsAsFactors = F)
-
-        rename_map = c(paste("log2FoldChange", names(fs)[x], sep = "."),
-                       paste("FDR", names(fs)[x], sep = "."))
-        combine_by = c('seqnames', 'strand', 'start', 'end')
-
-        if(type == "expression") {# {{{
-            # Don't try to read it in and select on one go as it won't work
-            tmp = tmp %>% dplyr::select(gene_id, chromosome_name:end_position,
-                                        log2FoldChange, padj:ncol(.)) %>%
-                  rename_(.dots = setNames(list("log2FoldChange", "padj",
-                                                "chromosome_name", "start_position", "end_position"),
-                          c(rename_map, "seqnames", "start", "end")))
-
-            combine_by = c('gene_id', combine_by)
-        } else {
-            tmp = tmp %>% dplyr::select(seqnames:end, strand, Fold, FDR:ncol(.)) %>%
-                  rename_(.dots = setNames(list("Fold", "FDR"), rename_map))
-        }
-        # }}}
-
-        if(flag) {# {{{
-            ofs = inner_join(ofs, tmp, by = combine_by)
-            # since samples at h0 will be in all comparisons expression columns for those will be
-            # duplicated and dplyr add '.x' or '.y' to them depending from which df they came for
-            # remove extension, find duplicates and remove. This would work nicer with rename() but I
-            # can't get it to work on selected columns
-            colnames(ofs) = gsub("\\.x|\\.y$", "", colnames(ofs))
-            discard = ofs %>% names(.) %>% duplicated()
-            ofs = ofs[,!discard]
-        } else {
-            ofs = tmp
-            flag = TRUE
-        }
-    }# }}}
-    return(ofs)
-}
-# }}}
-
-# When wanting to retrieve a cluster call the function to get IDs in particular cluster# {{{
-# df = tmp$plot_data, regions = bdf
-get_cluster = function(df, regions, results, total_k, cluster, threshold = 0.05, label){
-    # k must be equal to cutree_rows used in pheatmap for defining number of clusters
-    # http://stackoverflow.com/questions/27820158/pheatmap-in-r-how-to-get-clusters
-    drows = as.dist(1-cor(t(df), method = "pearson"))
-    clusters = cutree(results$tree_row, k = total_k)
-    heatmap_order = names(clusters[results$tree_row$order])
-
-    keep = clusters[clusters == cluster]
-    # Create df with just FDR scores for all regions in cluster
-    filters = bdf %>% filter(rowname %in% names(keep)) %>% select(starts_with("FDR"))
-    rownames(filters) = bdf %>% filter(rowname %in% names(keep)) %>% select(rowname) %>% .[[1]]
-    keep = keep[apply(filters < threshold, 1, all)]
-
-    cluster = regions %>% filter(rowname %in% names(keep))
-
-    cluster_gr = with(cluster,
-                       GRanges(seqnames = seqnames,
-                               IRanges(start, end),
-                               strand = strand))
-
-    values(cluster_gr) = (cluster %>% dplyr::select(-seqnames, -start, -end, -strand))
-
-    annotated = annotatePeakInBatch(cluster_gr, AnnotationData = genes)
-    annotated = as.data.frame(annotated)
-    minimal = as.data.frame(values(genes)) %>% rename(feature = gene_id)
-
-    annotated = inner_join(annotated, minimal, by = "feature")
-    write.table(annotated, file = file.path(output_path, paste0(label,".tsv")),
-                sep = "\t", col.names = T, row.names = F, quote = F)
-    pdf(file.path(plot_path, paste0('distances-', label, '.pdf')), paper = 'a4')
-    hist(annotated$shortestDistance)
-    dev.off()
-}
-# }}}
 
 # main # {{{
 main = function () {
-#    setwd("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013")
-#    args = list()
-#    args$sheet = list.files(pattern="diff-bind.config", full.names=T)
+    setwd("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013")
+    args = list()
+    args$sheet = "mm10/config/TF-steady-state-diff-bind.config"
 
     cnf_df = read.table(args$sheet, header=T, stringsAsFactors=F)
     proteins = levels(as.factor(cnf_df[['Factor']]))
@@ -562,7 +610,7 @@ main = function () {
         proteins = proteins[grep(x, proteins, invert = TRUE)]
     }
 
-    for (p in proteins) {
+    for (p in proteins[2]) {
         print(p)
         cnf = cnf_df %>% filter(Factor %in% c(p, keep))
         differential_binding(cnf, p)
@@ -573,6 +621,108 @@ main = function () {
     # comparisons = comparisons[grep('h.-h.', comparisons)]
     comparisons = comparisons[grep('!', comparisons, invert = T)]
     comparisons = as.data.frame(comparisons)
+
+    tmp = comparisons %>% .[[1]] %>% as.character() %>% basename() %>% file_path_sans_ext
+    tmp = gsub(".*_", '', tmp) %>% strsplit("-")
+    tmp = as.data.frame(do.call(rbind, tmp))
+    colnames(tmp) = c('c1', 'c2')
+    comparisons = cbind(comparisons, tmp)
+
+    pattern = paste0(file_path_sans_ext(args$gtf), '.rtracklayer-')
+    rtracklayer_output = c('5000-tss-2000', '2000-tss-500',
+                           '5000-gene_start-2000', '2000-gene_start-500',
+                           'exons', 'first-exon',
+                           'introns', 'first-intron',
+                           'genes', 'canonical-transcripts')
+    files = paste0(paste(pattern, rtracklayer_output, sep=''), '.gtf')
+    
+    args$active_enhancers = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-active_2015-08-10.bed"
+    args$poised_enhancers = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-poised_2015-08-10.bed"
+
+    library(rtracklayer)
+    if (any(file.exists(files))){
+        print('Importing files.')
+        annotations = lapply(files, function(x) import.gff3(x))
+        names(annotations) = rtracklayer_output
+        annotations$active_enhancers = import.bed(args$active_enhancers)
+        annotations$poised_enhancers = import.bed(args$poised_enhancers)
+    } else {
+        command = paste("Rscript ~/source/get-annotation-rscript.R -G", args$gtf, '-p', ncores, collapse = " ")
+        stop(paste('Annotation GTFs do not exist. Run `', command, '` first.', collapse = ' '))
+    }
+
+    # Heatmap for histone mods across time points# {{{
+    for (p in proteins){
+        fs = comparisons %>% dplyr::select(comparisons) %>% 
+                filter(grepl(p, comparisons)) %>%
+                unique() %>% .[[1]] %>% as.character()
+                
+        names(fs) = mutate(comparisons, label = paste(c1, c2, sep= "-")) %>%
+                        filter(grepl(p, comparisons)) %>%
+                        dplyr::select(label) %>% .[[1]] %>% as.character()
+
+
+        bdf_cnt = aggregate_counts(fs) %>% mutate(rowname = paste(seqnames, start, end, sep = "_"))
+        # format_cdf returns error if no db regions so use tryCatch to save that
+        bdf = tryCatch(format_cdf(bdf_cnt),
+                       error=function(e) e,
+                       warning=function(w) w)
+        if(is(bdf, 'error')) next;
+
+        db_regions = with(bdf_cnt,
+                          GRanges(seqnames = seqnames,
+                                  IRanges(start, end),
+                                  strand = strand))
+        names(db_regions) = paste(seqnames(db_regions), start(db_regions), end(db_regions), sep = "_")
+        x = annotate(db_regions, annotations, output_path, label)
+
+        library(ChIPpeakAnno)
+        db_distance_from_genes = annotatePeakInBatch(db_regions, AnnotationData = annotations[['genes']])
+        db_distance_from_genes = as.data.frame(db_distance_from_genes)
+        dup = db_distance_from_genes %>% filter(duplicated(peak)) %>% select(peak) %>% .[[1]]
+        tmp_ra = add_rownames(bdf$ra, var = 'peak')
+        # filtering duplicated(peak) because ChIPpeakAnno will report 2 genes if peak has equal distance from them
+        # here just selecting the first one reported
+        bdf$ra = db_distance_from_genes %>% select(peak, insideFeature, shortestDistance) %>%
+                    rename(relative_to_gene = insideFeature,
+                           d_relative_to_gene = shortestDistance) %>%
+                    mutate(d_relative_to_gene = d_relative_to_gene / 1000) %>%
+                    right_join(tmp_ra, by = 'peak') %>% filter(!duplicated(peak))
+        rownames(bdf$ra) = bdf$ra[['peak']]
+        bdf$ra = bdf$ra[,-1]
+
+        # discretize distance to look good on annotation tracks. Doing it manually cause not sure how to get 
+        # what I want with a package
+        tmp = c()
+        bins = c(0, 0.5, 1, 5, 10, 50, 100, 300)
+        for (i in 1:length(bins)) {
+            if(i == length(bins)) {
+                x = y >= bins[i]
+                tmp[x] = paste0(bins[i], 'kb+')
+            } else {
+                x = y >= bins[i] & y < bins[i+1]
+                tmp[x] = paste0(bins[i], '-', bins[i+1], 'kb')
+            }
+        }
+        bdf$ra$d_relative_to_gene = tmp
+
+        continuous_colors = colorRampPalette(brewer.pal(9,"RdYlGn"))(length(unique(tmp)))
+        bdf$ac$d_relative_to_gene = continuous_colors
+        names(bdf$ac$d_relative_to_gene) = mixedsort(unique(tmp))
+        
+        png(file.path(plot_path, paste0('differential_binding-', p, '.png')), height = 700, width = 700)
+
+        results = pheatmap(bdf$plot_data,
+                           clustering_distance_rows = "correlation",
+                           clustering_method = "ward.D2", scale = 'row',
+                           cluster_cols = FALSE, cluster_rows = TRUE,
+                           annotation_row = bdf$ra, annotation_col = bdf$ca,
+                           annotation_legend = T, annotation_colors = bdf$ac,
+                           show_rownames = FALSE, 
+                           main = paste0('Diff. binding: ', p))
+        dev.off()
+    }
+    #}}}
 
     tmp = comparisons %>% .[[1]] %>% as.character() %>% basename() %>% file_path_sans_ext %>% strsplit("-")
     tmp = as.data.frame(do.call(rbind, tmp)) %>% select(V2, V3)
@@ -607,144 +757,6 @@ main = function () {
     colnames(edf) = rename_columns
     edf = format_cdf(edf)
 
-    # Heatmap for histone mods across time points# {{{
-    for (p in proteins){
-        fs = comparisons %>% dplyr::select(comparisons) %>% 
-                filter(grepl(p, comparisons)) %>%
-                unique() %>% .[[1]] %>% as.character()
-                
-        names(fs) = mutate(comparisons, label = paste(c1, c2, sep= "-")) %>%
-                        filter(grepl(p, comparisons)) %>%
-                        dplyr::select(label) %>% .[[1]] %>% as.character()
-
-        bdf_cnt = aggregate_count_data(fs) %>% mutate(rowname = paste(seqnames, start, end, sep = "_"))
-        bdf = format_cdf(bdf_cnt)
-
-        db_regions = with(bdf_cnt,
-                          GRanges(seqnames = seqnames,
-                                  IRanges(start, end),
-                                  strand = strand))
-        names(db_regions) = paste(seqnames(db_regions), start(db_regions), end(db_regions), sep = "_")
-
-        library(ChIPpeakAnno)
-        library(rtracklayer)
-#        db_annotated = annotatePeakInBatch(db_regions, AnnotationData = genes)
-#        db_annotated = as.data.frame(db_annotated) %>% select(peak, feature, insideFeature, shortestDistance)
-        gene_promoters = promoters(genes, upstream = 2000, downstream = 500)
-        ov = findOverlaps(db_regions, gene_promoters, select = "arbitrary")
-        df = data.frame(region = names(db_regions))
-        df = left_join(df,
-                        data.frame(region = names(db_regions)[!is.na(ov)],
-                                   promoter = names(gene_promoters)[ov[!is.na(ov)]]),
-                        by = "region")
-        active_enhancers = import.bed("/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-active_2015-08-10.bed")
-        names(active_enhancers) = paste(seqnames(active_enhancers), start(active_enhancers), end(active_enhancers), sep="_")
-        ov = findOverlaps(db_regions, active_enhancers, select = "arbitrary")
-        df = left_join(df, 
-                       data.frame(region = names(db_regions)[!is.na(ov)],
-                                  active_enhancers = names(active_enhancers)[ov[!is.na(ov)]]),
-                       by = "region")
-        poised_enhancers = import.bed("/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-poised_2015-08-10.bed")
-        poised_enhancers = poised_enhancers[queryHits(findOverlaps(poised_enhancers, active_enhancers))]
-        names(poised_enhancers) = paste(seqnames(poised_enhancers), start(poised_enhancers), end(poised_enhancers), sep="_")
-        ov = findOverlaps(db_regions, poised_enhancers, select = "arbitrary")
-        df = left_join(df, 
-                       data.frame(region = names(db_regions)[!is.na(ov)],
-                                  poised_enhancers = names(poised_enhancers)[ov[!is.na(ov)]]),
-                       by = "region")
-        ov = findOverlaps(db_regions, genes, select = "arbitrary")
-        df = left_join(df, 
-                       data.frame(region = names(db_regions)[!is.na(ov)],
-                                  genes = names(genes)[ov[!is.na(ov)]]),
-                       by = "region")
-        df = df %>% mutate(status = ifelse((is.na(promoter) & is.na(genes) & is.na(active_enhancers) & is.na(poised_enhancers))
-                                            , 'intergenic',
-                                            ifelse(!is.na(active_enhancers),
-                                                   'active_enhancers',
-                                                   ifelse(!is.na(poised_enhancers),
-                                                          'poised_enhancers',
-                                                          ifelse(!is.na(promoter),
-                                                          'promoter','genes')
-                                                          )
-                                                   )
-                                            ))
-
-        # when I want to find the percentage of overlap
-#        x = db_regions[queryHits(ov)]
-#        y = active_enhancers[subjectHits(ov)]
-#        table(width(pintersect(x, y))/width(x) < 0.01)
-#        table(width(pintersect(x, y))/width(y) < 0.)
-
-        if(FALSE){# {{{
-            annotated = annotatePeakInBatch(genes, AnnotationData = db_regions)
-            annotated = as.data.frame(annotated)
-            # since annotating genes with peaks (and not the other way round) 
-            # gene identifiers will be under column peaks, select genes d.e.,
-            # reorder based on clusters from gene expression heatmap and subset db_regions
-            # downstream of gene, overlapStart of gene i.e. TSS, includeFeature = include peak
-            a = annotated %>% dplyr::select(one_of('gene_id', 'feature', 'insideFeature', 'shortestDistance'))
-
-            b = add_rownames(bdf$ra, var = "feature")
-            ra = left_join(b, a, by='feature')
-            row_annotation = add_rownames(edf$ra, var = 'gene_id')
-            colnames(row_annotation) = gsub('FDR.', 'Expression.FDR', colnames(row_annotation))
-            ra = left_join(ra, row_annotation, by="gene_id")
-
-    #        a = right_join(a,row_annotation, by='gene_id') %>% dplyr::select(-gene_id)
-    #        b = add_rownames(bdf$ra, var = "feature")
-    #        ra = left_join(b, a, by='feature')
-
-            if(any(duplicated(ra$feature))) {
-                dups = ra %>% filter(duplicated(feature)) %>% dplyr::select(feature) %>% .[[1]]
-                keep = lapply((ra %>% filter(feature %in% dups) %>% group_by(feature) %>% do(x = as_data_frame(.)) %>% .$x),
-                       function(x){
-                           k = x %>% dplyr::select(ncol(.):2) %>% mutate(x= min_rank(shortestDistance)) %>%
-                                 filter(x ==1) %>% dplyr::select(gene_id) %>% .[[1]]
-                           k[1]
-                       })
-                ra = ra %>% filter(!((feature %in% dups) & !(gene_id %in% unlist(keep))))
-            }
-            levels(ra[["insideFeature"]]) = c(levels(ra[["insideFeature"]]), 'non significant')
-            ra = ra %>% select(-shortestDistance) %>% mutate_each(funs(replace(., which(is.na(.)), "non significant"))) %>%
-                    dplyr::select(-gene_id)
-            
-            rownames(ra) = ra[['feature']]
-            ra = ra[,-1]
-            color = gg_color_hue(2)
-            ac = lapply(1:length(grep('Expression', colnames(ra))),
-                        function(x) c("non significant" = color[1],
-                                      "significant" = color[2]))
-            names(ac) = colnames(ra)[grep('Expression', colnames(ra))]
-
-            ac$insideFeature = gg_color_hue(length(levels(ra$insideFeature)))
-            names(ac$insideFeature) = levels(ra$insideFeature)
-
-            ac = c(ac, bdf$ac)
-        }
-
-        ra = left_join(add_rownames(bdf$ra, var = "region"), select(df, region, status), by = "region")
-        rownames(ra) = ra[['region']]
-        ra = ra[,-1]
-        ac = list()
-        set1_col = brewer.pal(9, 'Set1')
-        ac$status = c(set1_col[2], set1_col[5], set1_col[9], set1_col[4], set1_col[1])
-        names(ac$status) = levels(factor(df$status))
-        ac = c(ac, bdf$ac)
-
-
-        png(file.path(plot_path, paste0('differential_binding-', p, '.png')), height = 700, width = 700)
-
-        results = pheatmap(bdf$plot_data,
-                           clustering_distance_rows = "correlation",
-                           clustering_method = "ward.D2", scale = 'row', cutree_rows = 5,
-                           cluster_cols = FALSE, cluster_rows = TRUE,
-                           annotation_row = ra, annotation_col = bdf$ca,
-                           annotation_legend = T, annotation_colors = ac,
-                           show_rownames = FALSE, 
-                           main = paste0('Diff. binding: ', p))
-        dev.off()
-        rm(ac)
-    }# }}}# }}}
 
     # Heatmap for expression across time points # {{{
     png(file.path(plot_path, 'expression.png'), height=700, width =700)
