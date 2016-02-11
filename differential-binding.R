@@ -11,12 +11,17 @@ source("~/source/Rscripts/granges-functions.R")
 parser =  ArgumentParser(description="Perform differential binding analysis")
 parser$add_argument('-s', '--sheet', metavar= "file", required='True', type= "character", help= "Sample sheet must have SampleID,Condition,Treatment,Replicate,bamReads,bamControl,Peaks (last 3 are the path to the respective bed files)")
 parser$add_argument('-a', '--assembly', type= "character", default='mm10', help= "Give preferred assembly e.g. mm10. Default: mm10")
+parser$add_argument('-d', '--de', metavar = "path", type= "character", default='', help= "Path to look for the list of de expressed genes")
+parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
 parser$add_argument('-g', '--gtf', metavar= "file", type= "character",
                     default = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.75.gtf",
                     help= "GTF file. Looks for the rtracklayer generated gtfs for that annotation. If not found it runs get-annotation-rscript.R")
-parser$add_argument('-k', '--keep', type= "character", default='', help= "Factors to ignore for differential binding but plot")
-parser$add_argument('-d', '--de', metavar = "path", type= "character", default='', help= "Path to look for the list of de expressed genes")
-parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
+parser$add_argument('-e', '--active_enhancers', metavar= "file", type= "character",
+                    default = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-active_2015-08-10.bed",
+                    help= "BED file of active enhancers")
+parser$add_argument('-p', '--poised_enhancers', metavar= "file", type= "character",
+                    default = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-poised_2015-08-10.bed",
+                    help= "BED file of active enhancers")
 
 args = parser$parse_args()
 
@@ -353,11 +358,7 @@ annotate = function(grange, annotations, output_path, target,# {{{
         ov = findOverlaps(annotations[[i]], grange)
         # using names and not index as that will change when subsetting granges downstream
         hits = names(grange)[(1:length(grange)) %in% unique(subjectHits(ov))]
-        per_region[hits, 'closest_feature'] = paste(per_region[hits, 'closest_feature'], i, sep=';')
-
-        n_overlapping = length(unique(subjectHits(ov)))
-        grange = grange[! names(grange) %in% hits ]
-        per_feature[[i]] = n_overlapping
+        per_region[hits, 'closest_feature'] = rep(i, length(hits))
 
         print(paste0('Calculating %peaks overlapping ', i, '.', sep=''))
 
@@ -375,8 +376,28 @@ annotate = function(grange, annotations, output_path, target,# {{{
             # Avoiding duplicated values in bound$Gene
             tmp = anti_join(tmp, bound, by="Gene")
             bound = dplyr::bind_rows(bound, tmp)
+
+            # For each region keep the ID of feature is binding to. For regions binding to more than one gene etc
+            # will only keep the first occurrence in the ov table
+            tmp = as.data.frame(ov) %>% mutate(qNames = values(annotations[[i]])[[x]][queryHits],
+                                               sNames = names(grange)[subjectHits])
+            per_region[tmp[['sNames']], 'feature_id'] = tmp[['qNames']]
+        } else {
+            x = 'name'
+            if (! "name" %in% colnames(values(annotations[[i]])) | all(is.na(values(annotations[[i]])[['name']]))) {
+                values(annotations[[i]])[['name']] = paste(seqnames(annotations[[i]]), 
+                                                           start(annotations[[i]]), end(annotations[[i]]), sep=":")
+            }
+            tmp = as.data.frame(ov) %>% mutate(qNames = values(annotations[[i]])[[x]][queryHits],
+                                               sNames = names(grange)[subjectHits])
+            per_region[tmp[['sNames']], 'feature_id'] = tmp[['qNames']]
         }
+
+        n_overlapping = length(unique(subjectHits(ov)))
+        grange = grange[! names(grange) %in% hits ]
+        per_feature[[i]] = n_overlapping
     }
+
     per_region[['closest_feature']] = gsub("^NA;", '',  per_region[['closest_feature']])
 
     bound_table = data.frame(Gene = values(annotations[['genes']])[['ensembl_gene_id']]) %>% left_join(bound, by="Gene")
@@ -385,6 +406,9 @@ annotate = function(grange, annotations, output_path, target,# {{{
                 quote = F, row.names = F, sep="\t")
     write.table(bound,
                 file = file.path(output_path, paste0(target,'.bound-genes-only.tsv')),
+                quote = F, row.names = F, sep="\t")
+    write.table(add_rownames(per_region, var = "region"),
+                file = file.path(output_path, paste0(target,'.binding-per-region.tsv')),
                 quote = F, row.names = F, sep="\t")
 
     if(per_feature[['genes']] != 0){
@@ -402,16 +426,12 @@ annotate = function(grange, annotations, output_path, target,# {{{
 
 # When wanting to retrieve a cluster call the function to get IDs in particular cluster# {{{
 # df = tmp$plot_data, regions = bdf
-get_cluster = function(results, k = NULL, output_path, label, id = "ID"){
+get_cluster = function(results, k = 1, output_path, label, id = "ID"){
     # k must be equal to cutree_rows used in pheatmap for defining number of clusters
     # http://stackoverflow.com/questions/27820158/pheatmap-in-r-how-to-get-clusters
-    if(!is.null(k)){
-        clusters = data.frame(cluster_no = cutree(results$tree_row, k = k))
-    } else {
-        clusters = data.frame(cluster_no = cutree(results$tree_row, k = 1))
-    }
+    clusters = data.frame(cluster_no = cutree(results$tree_row, k = k))
     heatmap_order = add_rownames(clusters[results$tree_row$order,,drop = F], var = id)
-    write.table(heatmap_order, file.path(output_path, paste0(label, '-heatmap_order.tsv')),
+    write.table(heatmap_order, file.path(output_path, paste0(label, '-', k, 'clusters-heatmap_order.tsv')),
                 sep = "\t", col.names = T, row.names = F, quote = F)
     return(heatmap_order)
 }
@@ -605,10 +625,6 @@ main = function () {
 
     cnf_df = read.table(args$sheet, header=T, stringsAsFactors=F)
     proteins = levels(as.factor(cnf_df[['Factor']]))
-    keep = unlist(strsplit(args$keep, ':'))
-    for (x in keep){
-        proteins = proteins[grep(x, proteins, invert = TRUE)]
-    }
 
     for (p in proteins[2]) {
         print(p)
@@ -618,7 +634,6 @@ main = function () {
 
     comparisons = list.files(pattern = "[^db].tsv", path = output_path, full.name = T)
     # Keeping only the comparisons of the time points. If design is different this won't work
-    # comparisons = comparisons[grep('h.-h.', comparisons)]
     comparisons = comparisons[grep('!', comparisons, invert = T)]
     comparisons = as.data.frame(comparisons)
 
@@ -628,6 +643,7 @@ main = function () {
     colnames(tmp) = c('c1', 'c2')
     comparisons = cbind(comparisons, tmp)
 
+    # Retrieve annotation from gtf files# {{{
     pattern = paste0(file_path_sans_ext(args$gtf), '.rtracklayer-')
     rtracklayer_output = c('5000-tss-2000', '2000-tss-500',
                            '5000-gene_start-2000', '2000-gene_start-500',
@@ -635,9 +651,6 @@ main = function () {
                            'introns', 'first-intron',
                            'genes', 'canonical-transcripts')
     files = paste0(paste(pattern, rtracklayer_output, sep=''), '.gtf')
-    
-    args$active_enhancers = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-active_2015-08-10.bed"
-    args$poised_enhancers = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-poised_2015-08-10.bed"
 
     library(rtracklayer)
     if (any(file.exists(files))){
@@ -649,7 +662,7 @@ main = function () {
     } else {
         command = paste("Rscript ~/source/get-annotation-rscript.R -G", args$gtf, '-p', ncores, collapse = " ")
         stop(paste('Annotation GTFs do not exist. Run `', command, '` first.', collapse = ' '))
-    }
+    }# }}}
 
     # Heatmap for histone mods across time points# {{{
     for (p in proteins){
@@ -674,7 +687,7 @@ main = function () {
                                   IRanges(start, end),
                                   strand = strand))
         names(db_regions) = paste(seqnames(db_regions), start(db_regions), end(db_regions), sep = "_")
-        x = annotate(db_regions, annotations, output_path, label)
+        x = annotate(db_regions, annotations, output_path, p)
 
         library(ChIPpeakAnno)
         db_distance_from_genes = annotatePeakInBatch(db_regions, AnnotationData = annotations[['genes']])
@@ -720,17 +733,11 @@ main = function () {
                            annotation_legend = T, annotation_colors = bdf$ac,
                            show_rownames = FALSE, 
                            main = paste0('Diff. binding: ', p))
+        get_cluster(results, output_path = output_path, label = p)
         dev.off()
     }
     #}}}
-
-    tmp = comparisons %>% .[[1]] %>% as.character() %>% basename() %>% file_path_sans_ext %>% strsplit("-")
-    tmp = as.data.frame(do.call(rbind, tmp)) %>% select(V2, V3)
-    tmp = lapply(1:nrow(tmp), function(x) sort(tmp[x,]))
-    tmp = as.data.frame(do.call(rbind, tmp))
-    colnames(tmp) = c('c1', 'c2')
-    comparisons = cbind(comparisons, tmp)
-
+    
     expression_data = list.files(pattern = "[^de].tsv", path = args$de, full.name = T)
     expression_data = as.data.frame(expression_data)
 
@@ -741,82 +748,6 @@ main = function () {
     expression_data = cbind(expression_data, tmp)
     
     comparisons = inner_join(comparisons, expression_data, by = c("c1", "c2"))
-    genes = retrieve_annotation(as.character(comparisons[1,'expression_data']))
-
-    # Create matrix of expression for de genes only
-    # Do not plot just yet. Use edf$ra (row annotation) on the heatmap of peaks associated with a gene
-    efs = comparisons %>% dplyr::select(expression_data) %>% unique() %>% .[[1]] %>% as.character()
-    names(efs) = mutate(comparisons, label = paste(c1, c2, sep= "-")) %>%
-                 dplyr::select(expression_data, label) %>% unique() %>%
-                 dplyr::select(label) %>% .[[1]] %>% as.character()
-    edf_cnt = aggregate_count_data(efs, type = "expression")
-    edf = edf_cnt %>% rename(rowname = gene_id)
-    rename_columns = gsub('_2i', '',
-                          gsub('h_', '_',
-                               gsub(".*Rescue_", 'h', colnames(edf))))
-    colnames(edf) = rename_columns
-    edf = format_cdf(edf)
-
-
-    # Heatmap for expression across time points # {{{
-    png(file.path(plot_path, 'expression.png'), height=700, width =700)
-
-    results = pheatmap(edf$plot_data,
-                       clustering_distance_rows = "correlation",
-                       clustering_method = "ward.D2", scale = 'row', cutree_rows = 5,
-                       cluster_cols = FALSE, cluster_rows = TRUE,
-                       annotation_row = edf$ra, annotation_col = edf$ca,
-                       annotation_legend = T, annotation_colors = edf$ac,
-                       show_rownames = FALSE, 
-                       main = "Gene expression across time points")
-    dev.off()
-    drows = as.dist(1-cor(t(edf$plot_data), method = "pearson"))
-    clusters = cutree(results$tree_row, k = 5)
-    heatmap_order = names(clusters[results$tree_row$order])
-    heatmap_order_df = left_join((as.data.frame(heatmap_order) %>% rename(gene_id = heatmap_order)),
-                                 add_rownames(as.data.frame(clusters), var = 'gene_id'), by = 'gene_id')
-    a = read.delim("/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/inducible/deseq//h1-h0.tsv")
-    a = a %>% dplyr::select(gene_id) %>% mutate(clusters = 0) %>% filter(!gene_id %in% heatmap_order)
-    heatmap_order_df = rbind(a, heatmap_order_df)
-    write.table(heatmap_order_df, file.path(output_path, 'expression_heatmap_order.tsv'),
-                sep = "\t", col.names = T, row.names = F, quote = F)
-
-    steady_state_de = structure("/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/deseq/2i_wt-ko.tsv", names = 'steady_state')
-    steady_state_counts = structure("/nfs/research2/bertone/user/ralser/RNAseq/Brian/expression/20150811_corr_Expression_SL_and_2i", names = 'steady_state')
-    steady_state_counts = read.delim(steady_state_counts, head = T, sep = "\t", stringsAsFactors = F)
-
-    steady_state_counts = steady_state_counts %>% dplyr::select(gene_id, matches("2i"))
-    rownames(steady_state_counts) = steady_state_counts[['gene_id']]
-    steady_state_counts = steady_state_counts[,-1]
-    
-    pdf(file.path(plot_path, 'steady_state_expression.pdf'))
-    pheatmap(steady_state_counts[rownames(edf$plot_data),],
-             clustering_distance_rows = drows,
-             clustering_method = "ward.D2", scale = 'row', cutree_rows = 5,
-             cluster_cols = TRUE, cluster_rows = TRUE,
-#             annotation_row = row_annotation[qpcr_keep,], annotation_col = column_annotation,
-#             annotation_legend = T, annotation_colors = anno_colors,
-             show_rownames = FALSE)
-    dev.off()
-    gtf = import.gff("/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf")
-    gene_names = as.data.frame(values(gtf))[['group']]
-    a = parallel::mclapply(gene_names, function(x)
-                           gsub(".* ", "", gsub("\"", "", unlist(strsplit(gsub(';', ':', x), ":"))[1])))
-    a = unlist(a)
-    names(gtf) = a
-    # 3 genes were not in my annotation
-    keep = heatmap_order[heatmap_order %in% names(gtf)]
-    write.table((as.data.frame(keep) %>% rename(gene_id = keep)), file.path('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/results/profiles', 'expression_heatmap_order_list.tsv'),
-                sep = "\t", col.names = T, row.names = F, quote = F)
-    export(gtf[keep],"/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/results/profiles/Mus_musculus.GRCm38.70.DExpression_set.gtf", "GFF")
-
-    # make a test.gtf to see that ordering in python works
-    i = length(keep)-5
-    j = length(keep)
-    write.table((as.data.frame(keep) %>% rename(gene_id = keep)), file.path('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/results/profiles', 'test_list.tsv'),
-                sep = "\t", col.names = T, row.names = F, quote = F)
-    export(gtf[keep[c(1:5,i:j)]],"/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/results/profiles/test.gtf", "GFF")
-    # }}}
     
     gene_scores = edf_cnt %>% dplyr::select(gene_id, matches('FDR'))
     rownames(gene_scores) = gene_scores[[1]]
