@@ -348,7 +348,7 @@ annotate = function(grange, annotations, output_path, target,# {{{
     stopifnot(is(grange, "GRanges"))
     total = length(grange)
 
-    per_region = data.frame(closest_feature = rep(NA, total))
+    per_region = data.frame(overlapping_feature = rep(NA, total))
     rownames(per_region) = names(grange)
 
     per_feature = setNames(vector("list", length(priority)), priority)
@@ -358,7 +358,7 @@ annotate = function(grange, annotations, output_path, target,# {{{
         ov = findOverlaps(annotations[[i]], grange)
         # using names and not index as that will change when subsetting granges downstream
         hits = names(grange)[(1:length(grange)) %in% unique(subjectHits(ov))]
-        per_region[hits, 'closest_feature'] = rep(i, length(hits))
+        per_region[hits, 'overlapping_feature'] = rep(i, length(hits))
 
         print(paste0('Calculating %peaks overlapping ', i, '.', sep=''))
 
@@ -397,10 +397,9 @@ annotate = function(grange, annotations, output_path, target,# {{{
         grange = grange[! names(grange) %in% hits ]
         per_feature[[i]] = n_overlapping
     }
-
-    per_region[['closest_feature']] = gsub("^NA;", '',  per_region[['closest_feature']])
-
     bound_table = data.frame(Gene = values(annotations[['genes']])[['ensembl_gene_id']]) %>% left_join(bound, by="Gene")
+    per_region[is.na(per_region$overlapping_feature), 'overlapping_feature'] = 'intergenic'
+
     write.table(bound_table,
                 file = file.path(output_path, paste0(target,'.binding-per-gene.tsv')),
                 quote = F, row.names = F, sep="\t")
@@ -616,7 +615,6 @@ per_db_region = function(db_regions, deseq_results, pattern = 'Expression'){
 # }}}
 
 
-
 # main # {{{
 main = function () {
     setwd("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013")
@@ -682,12 +680,13 @@ main = function () {
                        warning=function(w) w)
         if(is(bdf, 'error')) next;
 
+        # Rsgions considered in DB analysis. Not differentially bound ones!
         db_regions = with(bdf_cnt,
                           GRanges(seqnames = seqnames,
                                   IRanges(start, end),
                                   strand = strand))
         names(db_regions) = paste(seqnames(db_regions), start(db_regions), end(db_regions), sep = "_")
-        x = annotate(db_regions, annotations, output_path, p)
+        annotated_regions = annotate(db_regions, annotations, output_path, p)
 
         library(ChIPpeakAnno)
         db_distance_from_genes = annotatePeakInBatch(db_regions, AnnotationData = annotations[['genes']])
@@ -696,6 +695,7 @@ main = function () {
         tmp_ra = add_rownames(bdf$ra, var = 'peak')
         # filtering duplicated(peak) because ChIPpeakAnno will report 2 genes if peak has equal distance from them
         # here just selecting the first one reported
+        tmp_ra = right_join((add_rownames(annotated_regions$per_region, var='peak') %>% select(-feature_id)), tmp_ra, by ='peak')
         bdf$ra = db_distance_from_genes %>% select(peak, insideFeature, shortestDistance) %>%
                     rename(relative_to_gene = insideFeature,
                            d_relative_to_gene = shortestDistance) %>%
@@ -704,7 +704,7 @@ main = function () {
         rownames(bdf$ra) = bdf$ra[['peak']]
         bdf$ra = bdf$ra[,-1]
 
-        # discretize distance to look good on annotation tracks. Doing it manually cause not sure how to get 
+        # discretize distance to look good on annotation tracks. Doing it manually cause not sure how to get # {{{
         # what I want with a package
         tmp = c()
         bins = c(0, 0.5, 1, 5, 10, 50, 100, 300)
@@ -717,11 +717,18 @@ main = function () {
                 tmp[x] = paste0(bins[i], '-', bins[i+1], 'kb')
             }
         }
-        bdf$ra$d_relative_to_gene = tmp
+        bdf$ra$d_relative_to_gene = tmp# }}}
 
         continuous_colors = colorRampPalette(brewer.pal(9,"RdYlGn"))(length(unique(tmp)))
         bdf$ac$d_relative_to_gene = continuous_colors
         names(bdf$ac$d_relative_to_gene) = mixedsort(unique(tmp))
+        
+        ordering = c('2000-tss-500','intergenic', 'first-exon', 'exons',
+                     'first-intron', 'introns','active_enhancers', 'poised_enhancers')
+        # Setting levels for factor cause otherwise  pheatmap complains
+        bdf$ra$overlapping_feature = factor(bdf$ra$overlapping_feature, levels = ordering)
+        bdf$ac$overlapping_feature = colorRampPalette(brewer.pal(9,"Paired"))(length(ordering))
+        names(bdf$ac$overlapping_feature) = ordering
         
         png(file.path(plot_path, paste0('differential_binding-', p, '.png')), height = 700, width = 700)
 
@@ -733,43 +740,44 @@ main = function () {
                            annotation_legend = T, annotation_colors = bdf$ac,
                            show_rownames = FALSE, 
                            main = paste0('Diff. binding: ', p))
-        get_cluster(results, output_path = output_path, label = p)
+        cluster = get_cluster(results, output_path = output_path, label = p)
         dev.off()
     }
     #}}}
     
-    expression_data = list.files(pattern = "[^de].tsv", path = args$de, full.name = T)
-    expression_data = as.data.frame(expression_data)
+    if(FALSE){# {{{
+        expression_data = list.files(pattern = "[^de].tsv", path = args$de, full.name = T)
+        expression_data = as.data.frame(expression_data)
 
-    tmp = expression_data %>% .[[1]] %>% as.character() %>%
-          basename() %>% file_path_sans_ext %>% str_replace_all("_DE|_de", "") %>% strsplit("-")
-    tmp = as.data.frame(do.call(rbind, lapply(tmp, sort)))
-    colnames(tmp) = c('c1', 'c2')
-    expression_data = cbind(expression_data, tmp)
-    
-    comparisons = inner_join(comparisons, expression_data, by = c("c1", "c2"))
-    
-    gene_scores = edf_cnt %>% dplyr::select(gene_id, matches('FDR'))
-    rownames(gene_scores) = gene_scores[[1]]
-    gene_scores = gene_scores[,-1]
-    g = list()
-    for (x in colnames(gene_scores)){
-        name = gsub("FDR.", "", x)
-        g[[name]] = gene_scores[,x]
-        names(g[[name]]) = rownames(gene_scores)
-        g[[name]] = g[[name]][!is.na(g[[name]])]
-    }
+        tmp = expression_data %>% .[[1]] %>% as.character() %>%
+              basename() %>% file_path_sans_ext %>% str_replace_all("_DE|_de", "") %>% strsplit("-")
+        tmp = as.data.frame(do.call(rbind, lapply(tmp, sort)))
+        colnames(tmp) = c('c1', 'c2')
+        expression_data = cbind(expression_data, tmp)
+        
+        comparisons = inner_join(comparisons, expression_data, by = c("c1", "c2"))
+        
+        gene_scores = edf_cnt %>% dplyr::select(gene_id, matches('FDR'))
+        rownames(gene_scores) = gene_scores[[1]]
+        gene_scores = gene_scores[,-1]
+        g = list()
+        for (x in colnames(gene_scores)){
+            name = gsub("FDR.", "", x)
+            g[[name]] = gene_scores[,x]
+            names(g[[name]]) = rownames(gene_scores)
+            g[[name]] = g[[name]][!is.na(g[[name]])]
+        }
 
-    # Doing GSEA on de genes and de and db genes
-    source("~/source/Rscripts/functions.R")
-    x = lapply(names(g), function(name){
-        pdf(file.path(plot_path, paste0(name, '.gsea.pdf')), paper = 'a4')
-        ob = get_set_enrichment(gene_scores = g[[name]], label = name)
-        dev.off()
-                       })
+        # Doing GSEA on de genes and de and db genes
+        source("~/source/Rscripts/functions.R")
+        x = lapply(names(g), function(name){
+            pdf(file.path(plot_path, paste0(name, '.gsea.pdf')), paper = 'a4')
+            ob = get_set_enrichment(gene_scores = g[[name]], label = name)
+            dev.off()
+                           })
 
-#        ob = get_set_enrichment(gene_scores = gene_scores, bound = (select(annotated_df, gene_id) %>% .[[1]]), label = label)
-
+    #        ob = get_set_enrichment(gene_scores = gene_scores, bound = (select(annotated_df, gene_id) %>% .[[1]]), label = label)
+    }# }}}
 
 }
 
