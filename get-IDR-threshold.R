@@ -17,6 +17,8 @@ parser$add_argument('-t', '--type', action ="store_true", default = FALSE, help 
 args = parser$parse_args()
 #}}}
 
+options(scipen = 999)
+
 if(args$type){
     print('Reporting thresholds for pooled consistency')
     low = 0.005
@@ -33,8 +35,9 @@ df = df %>% select(V2,V3) %>%
     filter(group != "total") %>%
     group_by(group) %>% summarise(min = min(V2), max=max(V2)) %>% 
     mutate(top = ifelse(min < 100000, 100000, 150000),
-           thr = ifelse(min < 100000, high, low)) %>%
-    tidyr::unite(output, group, thr, sep="_conservative_") %>%
+           thr = ifelse(min < 100000, high, low), 
+           tmp = thr) %>%
+    tidyr::unite(output, group, tmp, sep="_conservative_") %>%
     mutate(output = basename(gsub("$", ".narrowPeak", output)))
     
 write.table(df, args$output, col.names=T, row.names=F, quote=F, sep="\t")
