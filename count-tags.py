@@ -31,6 +31,7 @@ parser.add_argument('-g', '--gtf', type = str,
         help= 'GTF for the ensembl annotation.')
 parser.add_argument('-r', '--regions', type = str, help= 'BED file containing regions of interest.')
 parser.add_argument('-f', '--full', default = True, help="If set to true then count tags for gene/peak")
+parser.add_argument('-m', '--force', action='store_true', default=False, help="If set to true then force to count tags again and generate npz")
 
 args = parser.parse_args()
 
@@ -104,9 +105,7 @@ def count_tags (ip, ctrl, features, description):
     print output
     sys.exit
     # Run if file does not exist and experiment has no replicates
-    if os.path.exists(output):
-        print ".npz already exists; using that"
-    else:
+    if not os.path.exists(output) or args.force:
         # Read in bam files
         ip = metaseq.genomic_signal(ip, 'bam')
         ctrl = metaseq.genomic_signal(ctrl, 'bam')
@@ -131,6 +130,8 @@ def count_tags (ip, ctrl, features, description):
                 link_features = True,
                 overwrite = True)
         print "done"
+    else:
+        print ".npz already exists; using that"
     return;# }}}
 
 # # Create database from ensembl GTF if it does not already exist# {{{
@@ -178,6 +179,7 @@ def create_features():
 
 # For each bam calculate signal and plot it# {{{
 def main():
+
     # Create genomic_signal objects that point to data files
     for i in range(len(args.ip)):
         if len(args.ip) == len(args.ctrl):
@@ -205,6 +207,7 @@ def main():
             print 'Regions not provided'
         else:
             'ToDo: read in the peaks and do similar analysis to genes'
+
 # }}}
 
 main()
