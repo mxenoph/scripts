@@ -100,12 +100,6 @@ def tss_generator(database):# {{{
             
 # }}}
 
-def upstream_gene_5kb(genes):
-    genes.flank(genome=args.assembly, s=True, r=0, l=5000)
-
-def downstream_gene_5kb(genes):
-    genes.flank(genome=args.assembly, s=True, l=0, r=5000)
-
 # Create arrays in parallel, and save to disk for later # {{{
 def count_tags (ip, ctrl, features, description):
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
@@ -114,35 +108,39 @@ def count_tags (ip, ctrl, features, description):
     # multiprocessing.cpu_count() gives the allocated number of cores, so if used with LSF this will 
     # return the number of cores on the host -- not good practice
     # processes = multiprocessing.cpu_count()
-#    processes = int(os.environ["LSB_DJOB_NUMPROC"])
-    processes =1
+    processes = int(os.environ["LSB_DJOB_NUMPROC"])
     print 'Counting tags...'
 
     # Use prefix of ip file as filename for numpy array (npz)
     basename = args.out_dir + os.path.splitext(os.path.basename(ip))[0]
     # description is a description of the features provided
+    output = basename + '.npz'
+    print output
     basename = basename + '.' + description
     
     pattern = re.compile('(\d+)-(\w+)-(\d+)')
     # matching will be empty if .genes.features or any other file not in upstream-feature-downstream format
     matching = pattern.match(description)
+
     if matching:
         upstream, feature_type, downstream = matching.groups()
         # Set the bins such that counting is done for every 10bp window
+        print 'in matching'
         bins = (int(upstream) + int(downstream))/10
     elif re.compile('(\d+)-(\w+)').match(description) or re.compile('(\w+)-(\d+)').match(description):
+        print 'in matching partial'
         if re.compile('(\d+)-(\w+)').match(description):
             upstream, feature_type = re.compile('(\d+)-(\w+)').match(description).groups()
             bins = int(upstream)/10
         else:
-            feature_type, downstream = re.compile('(\d+)-(\w+)').match(description).groups()
+            feature_type, downstream = re.compile('(\w+)-(\d+)').match(description).groups()
             bins = int(downstream)/10
     else:
         # For genes it only makes sense to count every 1% of gene
         bins = 100
 
-    output = basename + '.npz'
-    print output
+   # the division makes the number a float which doesn't work with 
+    bins = int(bins)
 
     # Run if file does not exist and experiment has no replicates
     if not os.path.exists(output) or args.force:
@@ -153,9 +151,7 @@ def count_tags (ip, ctrl, features, description):
         # Create arrays in parallel
         print "Building the IP array for %s using %s processors" % (basename, processes)
         ip_array = ip.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
-        #ip_array = ip.array(features, bins = bins, processes = processes, shift_width = int(args.fs)/2)
         print "Building the input array for %s using %s processors" % (basename, processes)
-        #ctrl_array = ctrl.array(features, bins = bins, processes = processes, shift_width = int(args.fs)/2)
         ctrl_array = ctrl.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
         
         # Normalize to library size
@@ -233,9 +229,6 @@ def create_features():
     return {'tss':tss, 'gene_start':gene_start, 'genes':genes, 'upstream':upstream, 'downstream':downstream}
 # }}}
 
-### from metaseq paper --check before incorporating -- implement the cached version of all features
-#EXCLUDED_CHROMS = ['chrM']
-
 # }}}
 
 # For each bam calculate signal and plot it# {{{
@@ -262,14 +255,14 @@ def main():
 #        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
 #                features = features['tss'], description = str(args.upstream) + '-tss-' + str(args.downstream))
 #
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['genes'], description = 'genes' )
+        
         count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['genes'], description = 'genes' )
+                features = features['upstream'], description = '5000-gene_start' )
         
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['upstream'], description = '5000-gene_start' )
-        
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['downstream'], description = 'gene_start-5000' )
+        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+                features = features['downstream'], description = 'gene_start-5000' )
         
         if not args.regions:
             print 'Regions not provided'
@@ -279,4 +272,3 @@ def main():
 # }}}
 
 main()
-#f = create_features()
