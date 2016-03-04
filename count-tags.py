@@ -29,6 +29,7 @@ parser.add_argument('-d', '--downstream', required = False, default = 500, help 
 parser.add_argument('-g', '--gtf', type = str,
         default = '/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf',
         help= 'GTF for the ensembl annotation.')
+parser.add_argument('-a', '--assembly', type = str, default = 'mm10', help= 'Assembly (default:mm10). Used to retrieve chromosomes lengths from ucsc')
 parser.add_argument('-r', '--regions', type = str, help= 'BED file containing regions of interest.')
 parser.add_argument('-f', '--full', default = True, help="If set to true then count tags for gene/peak")
 parser.add_argument('-m', '--force', action='store_true', default=False, help="If set to true then force to count tags again and generate npz")
@@ -63,6 +64,12 @@ class ref:
     def get(self):    return self.obj
     def set(self, obj):      self.obj = obj
 
+EXCLUDED_CHROMS = ['chrU', 'chrUextra']
+
+def chrom_filter(f):
+    if f.chrom not in EXCLUDED_CHROMS and f.strand != '.':
+        return True
+
 def genes_generator(database):# {{{
     """
     Generator function to yield TSS +/- Kb of each annotated gene
@@ -70,8 +77,10 @@ def genes_generator(database):# {{{
     for gene in database.features_of_type('gene'):
         if (re.match('chr', gene.chrom)):
             yield asinterval(gene)
+
 # }}}
 
+# Function Not used -- check if ever needed before trashing
 def gene_start_generator(database):# {{{
     """
     Generator function to yield TSS +/- Kb of each annotated gene
@@ -87,23 +96,54 @@ def tss_generator(database):# {{{
     """
     for transcript in database.features_of_type('transcript'):
         if (re.match('chr', transcript.chrom)):
-            yield TSS(asinterval(transcript), upstream = args.upstream, downstream = args.downstream)# }}}
+            yield TSS(asinterval(transcript), upstream = args.upstream, downstream = args.downstream)
+            
+# }}}
+
+def upstream_gene_5kb(genes):
+    genes.flank(genome=args.assembly, s=True, r=0, l=5000)
+
+def downstream_gene_5kb(genes):
+    genes.flank(genome=args.assembly, s=True, l=0, r=5000)
 
 # Create arrays in parallel, and save to disk for later # {{{
 def count_tags (ip, ctrl, features, description):
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
     from metaseq import persistence
     import multiprocessing
-    processes = multiprocessing.cpu_count()
+    # multiprocessing.cpu_count() gives the allocated number of cores, so if used with LSF this will 
+    # return the number of cores on the host -- not good practice
+    # processes = multiprocessing.cpu_count()
+#    processes = int(os.environ["LSB_DJOB_NUMPROC"])
+    processes =1
+    print 'Counting tags...'
 
     # Use prefix of ip file as filename for numpy array (npz)
     basename = args.out_dir + os.path.splitext(os.path.basename(ip))[0]
     # description is a description of the features provided
     basename = basename + '.' + description
+    
+    pattern = re.compile('(\d+)-(\w+)-(\d+)')
+    # matching will be empty if .genes.features or any other file not in upstream-feature-downstream format
+    matching = pattern.match(description)
+    if matching:
+        upstream, feature_type, downstream = matching.groups()
+        # Set the bins such that counting is done for every 10bp window
+        bins = (int(upstream) + int(downstream))/10
+    elif re.compile('(\d+)-(\w+)').match(description) or re.compile('(\w+)-(\d+)').match(description):
+        if re.compile('(\d+)-(\w+)').match(description):
+            upstream, feature_type = re.compile('(\d+)-(\w+)').match(description).groups()
+            bins = int(upstream)/10
+        else:
+            feature_type, downstream = re.compile('(\d+)-(\w+)').match(description).groups()
+            bins = int(downstream)/10
+    else:
+        # For genes it only makes sense to count every 1% of gene
+        bins = 100
 
     output = basename + '.npz'
     print output
-    sys.exit
+
     # Run if file does not exist and experiment has no replicates
     if not os.path.exists(output) or args.force:
         # Read in bam files
@@ -112,11 +152,11 @@ def count_tags (ip, ctrl, features, description):
         
         # Create arrays in parallel
         print "Building the IP array for %s using %s processors" % (basename, processes)
-        #ip_array = ip.array(features, bins = 100, processes = processes, fragment_size = int(args.fs))
-        ip_array = ip.array(features, bins = 100, processes = processes, shift_width = int(args.fs)/2)
+        ip_array = ip.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
+        #ip_array = ip.array(features, bins = bins, processes = processes, shift_width = int(args.fs)/2)
         print "Building the input array for %s using %s processors" % (basename, processes)
-        #ctrl_array = ctrl.array(features, bins = 100, processes = processes, fragment_size = int(args.fs))
-        ctrl_array = ctrl.array(features, bins = 100, processes = processes, shift_width = int(args.fs)/2)
+        #ctrl_array = ctrl.array(features, bins = bins, processes = processes, shift_width = int(args.fs)/2)
+        ctrl_array = ctrl.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
         
         # Normalize to library size
         ip_array /= ip.mapped_read_count() / 1e6
@@ -157,8 +197,10 @@ def create_features():
     filename = gff_filename.replace('.gtf', '.metaseq.genes.gtf')
     if not os.path.exists(filename):
         # A BedTool made out of a generator, and saved to file.
-        genes = pybedtools.BedTool(gff_filename)\
-                        .saveas(filename)
+        print "Creating genes: %s " % filename
+        genes = pybedtools.BedTool(genes_generator(db)).saveas(filename)
+#        genes = pybedtools.BedTool(gff_filename)\
+#                        .saveas(filename)
     else:
         genes = pybedtools.BedTool(filename)
                 
@@ -166,14 +208,33 @@ def create_features():
     filename = gff_filename.replace('.gtf', suffix)
     if not os.path.exists(filename):
         # A BedTool made out of a generator, and saved to file.
+        print "Creating gene_start: %s " % filename
         gene_start = pybedtools.BedTool(gene_start_generator(db))\
                 .saveas(filename)
     else:
         gene_start = pybedtools.BedTool(filename)
+    
+    filename = gff_filename.replace('.gtf', '.metaseq.5000-gene_start.gtf')
+    if not os.path.exists(filename) or os.stat(filename).st_size == 0:
+        print 'Creating ' + filename + ' ...'
+        print "Creating upstream region of gene start: %s " % filename
+        upstream = genes.flank(genome=args.assembly, s=True, r=0, l=5000).saveas(filename)
+    else:
+        upstream = pybedtools.BedTool(filename)
+    
+    filename = gff_filename.replace('.gtf', '.metaseq.gene_end-5000.gtf')
+    if not os.path.exists(filename) or os.stat(filename).st_size == 0:
+        print "Creating downstream region of gene end: %s " % filename
+        downstream = genes.flank(genome=args.assembly, s=True, l=0, r=5000).saveas(filename)
+    else:
+        downstream = pybedtools.BedTool(filename)
                 
     #tsses_1kb = tsses.slop(b=1000, genome='mm10', output = gff_filename.replace('.gtf', '.tss_1kb.gtf'))
-    return {'tss':tss, 'gene_start':gene_start, 'genes':genes}
+    return {'tss':tss, 'gene_start':gene_start, 'genes':genes, 'upstream':upstream, 'downstream':downstream}
 # }}}
+
+### from metaseq paper --check before incorporating -- implement the cached version of all features
+#EXCLUDED_CHROMS = ['chrM']
 
 # }}}
 
@@ -193,15 +254,22 @@ def main():
         else:
             print 'Different number of IP and input BAM bams provided. I do not know how these experiments are associated.'
 
+        print 'Calling create_features() ...'
         features = create_features()
-        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['gene_start'], description = str(args.upstream) + '-gene_start-' + str(args.downstream))
-
-        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['tss'], description = str(args.upstream) + '-tss-' + str(args.downstream))
-
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['gene_start'], description = str(args.upstream) + '-gene_start-' + str(args.downstream))
+#
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['tss'], description = str(args.upstream) + '-tss-' + str(args.downstream))
+#
         count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
                 features = features['genes'], description = 'genes' )
+        
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['upstream'], description = '5000-gene_start' )
+        
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['downstream'], description = 'gene_start-5000' )
         
         if not args.regions:
             print 'Regions not provided'
@@ -211,3 +279,4 @@ def main():
 # }}}
 
 main()
+#f = create_features()
