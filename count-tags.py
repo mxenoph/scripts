@@ -15,6 +15,8 @@ import pybedtools
 import metaseq
 from pylab import *
 from pybedtools.featurefuncs import TSS
+from pybedtools.featurefuncs import less_than
+from pybedtools.featurefuncs import greater_than
 from gffutils.helpers import asinterval# }}}
 
 # Parsing command line arguments and creating output subdirectories# {{{
@@ -103,6 +105,20 @@ def tss_generator(database):# {{{
 # Create arrays in parallel, and save to disk for later # {{{
 def count_tags (ip, ctrl, features, description):
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
+
+    def genomic_signal_bigwigs(celltype):
+        """
+        Returns a dictionary of genomic_signal objects keyed by factor (as labeled
+        by modENCODE) for all data available for `celltype`.
+        """
+        filenames = sorted([i for i in bigwigs if celltype in i.lower()])
+        bigwig_dict = {}
+        for fn in filenames:
+            if celltype in fn.lower():
+                key = os.path.basename(fn).replace('.bigwig', '')
+                bigwig_dict[key] = metaseq.genomic_signal(fn, 'bigwig')
+        return bigwig_dict
+
     from metaseq import persistence
     import multiprocessing
     # multiprocessing.cpu_count() gives the allocated number of cores, so if used with LSF this will 
@@ -224,9 +240,33 @@ def create_features():
         downstream = genes.flank(genome=args.assembly, s=True, l=0, r=5000).saveas(filename)
     else:
         downstream = pybedtools.BedTool(filename)
-                
-    #tsses_1kb = tsses.slop(b=1000, genome='mm10', output = gff_filename.replace('.gtf', '.tss_1kb.gtf'))
-    return {'tss':tss, 'gene_start':gene_start, 'genes':genes, 'upstream':upstream, 'downstream':downstream}
+   
+    # upstream.filter(greater_than, 4999) return a subset of the bedtool object (only features of length bigger than 4999 are included)
+    upstream_filtered = [ g.name for g in upstream.filter(greater_than, 4999) ]
+    downstream_filtered = [ g.name for g in downstream.filter(greater_than, 4999) ]
+    print "Genes: %s Pass filter, upstream: %s downstream: %s" % (len(genes), len(upstream_filtered), len(downstream_filtered))
+
+    tmp = [g.name for g in genes if g.name not in upstream_filtered]
+    # Joining the 2 tuples. tmp contains the genes to be filtered out
+    tmp = tmp + [g.name for g in genes if g.name not in downstream_filtered]
+
+    if len(tmp) != 0 and not os.path.exists(gff_filename.replace('.gtf', '.metaseq.genes-filtered-out.gtf')):
+        print "Filtering out regions of width < 5Kb."
+        print "These are for genes near chromosome ends that promoter or downstream region hang over chromosome end. (Total: %s Filtered out: %s)." % (len(genes), len(tmp))
+        print "Writing filtered files after matching genes and their order."
+
+        # Keeping track of what was excluded
+        filtered_out_genes = genes.filter(lambda gene: gene.name in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.genes-filtered-out.gtf'))
+
+        filtered_genes = genes.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
+        filtered_upstream = upstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
+        filtered_downstream = downstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
+    else:
+        filtered_genes = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
+        filtered_upstream = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
+        filtered_downstream = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
+        
+    return {'tss':tss, 'gene_start':gene_start, 'genes':genes, 'genes-filtered':filtered_genes, 'upstream-filtered':filtered_upstream, 'downstream-filtered':filtered_downstream}
 # }}}
 
 # }}}
@@ -257,12 +297,15 @@ def main():
 #
 #        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
 #                features = features['genes'], description = 'genes' )
-        
+#       
         count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['upstream'], description = '5000-gene_start' )
-        
+                features = features['genes-filtered'], description = 'genes-filtered' )
+
         count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['downstream'], description = 'gene_start-5000' )
+                features = features['upstream-filtered'], description = '5000-gene_start' )
+       
+        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+                features = features['downstream-filtered'], description = 'gene_end-5000' )
         
         if not args.regions:
             print 'Regions not provided'
