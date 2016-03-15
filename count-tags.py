@@ -35,6 +35,7 @@ parser.add_argument('-a', '--assembly', type = str, default = 'mm10', help= 'Ass
 parser.add_argument('-r', '--regions', type = str, help= 'BED file containing regions of interest.')
 parser.add_argument('-f', '--full', default = True, help="If set to true then count tags for gene/peak")
 parser.add_argument('-m', '--force', action='store_true', default=False, help="If set to true then force to count tags again and generate npz")
+parser.add_argument('-b', '--bigwig', action='store_true', default=False, help="If set to true then files passed are bigwig files")
 
 args = parser.parse_args()
 
@@ -102,22 +103,23 @@ def tss_generator(database):# {{{
             
 # }}}
 
-# Create arrays in parallel, and save to disk for later # {{{
-def count_tags (ip, ctrl, features, description):
-    "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
+# when using filter from pybedtools it does not correctly write the gtf and it can not find the attribute gene_id afterwards# {{{
+def correct_bedtools_output(filename):
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    f.close()
+    f = open(filename, 'w')
 
-    def genomic_signal_bigwigs(celltype):
-        """
-        Returns a dictionary of genomic_signal objects keyed by factor (as labeled
-        by modENCODE) for all data available for `celltype`.
-        """
-        filenames = sorted([i for i in bigwigs if celltype in i.lower()])
-        bigwig_dict = {}
-        for fn in filenames:
-            if celltype in fn.lower():
-                key = os.path.basename(fn).replace('.bigwig', '')
-                bigwig_dict[key] = metaseq.genomic_signal(fn, 'bigwig')
-        return bigwig_dict
+    for line in lines:
+        f.write(line.strip("\n")+";\n")
+    f.close()
+# }}}
+
+# Create arrays in parallel, and save to disk for later # {{{
+def count_tags (bigwig = None, ip = None, ctrl = None, features, description):
+    "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
+    assert bw is not None or (ip is not None and ctrl is not None), \
+            "Provide either one normalised bigwig or BAM files for IP and control."
 
     from metaseq import persistence
     import multiprocessing
@@ -127,13 +129,17 @@ def count_tags (ip, ctrl, features, description):
     processes = int(os.environ["LSB_DJOB_NUMPROC"])
     print 'Counting tags...'
 
-    # Use prefix of ip file as filename for numpy array (npz)
-    basename = args.out_dir + os.path.splitext(os.path.basename(ip))[0]
+    if bw is not None:
+        # Use prefix of ip file as filename for numpy array (npz)
+        basename = args.out_dir + os.path.splitext(os.path.basename(bw))[0]
+    else:
+        basename = args.out_dir + os.path.splitext(os.path.basename(ip))[0]
     # description is a description of the features provided
-    output = basename + '.npz'
-    print output
     basename = basename + '.' + description
+    output = basename + '.npz'
+    print 'Output: %s' % output
     
+    # Calculate number of bins depending on feature# {{{
     pattern = re.compile('(\d+)-(\w+)-(\d+)')
     # matching will be empty if .genes.features or any other file not in upstream-feature-downstream format
     matching = pattern.match(description)
@@ -141,10 +147,8 @@ def count_tags (ip, ctrl, features, description):
     if matching:
         upstream, feature_type, downstream = matching.groups()
         # Set the bins such that counting is done for every 10bp window
-        print 'in matching'
         bins = (int(upstream) + int(downstream))/10
     elif re.compile('(\d+)-(\w+)').match(description) or re.compile('(\w+)-(\d+)').match(description):
-        print 'in matching partial'
         if re.compile('(\d+)-(\w+)').match(description):
             upstream, feature_type = re.compile('(\d+)-(\w+)').match(description).groups()
             bins = int(upstream)/10
@@ -153,38 +157,53 @@ def count_tags (ip, ctrl, features, description):
             bins = int(downstream)/10
     else:
         # For genes it only makes sense to count every 1% of gene
-        bins = 100
+#        bins = 100
+        bins = 1000
 
    # the division makes the number a float which doesn't work with 
     bins = int(bins)
+    # }}}
 
     # Run if file does not exist and experiment has no replicates
     if not os.path.exists(output) or args.force:
-        # Read in bam files
-        ip = metaseq.genomic_signal(ip, 'bam')
-        ctrl = metaseq.genomic_signal(ctrl, 'bam')
-        
-        # Create arrays in parallel
-        print "Building the IP array for %s using %s processors" % (basename, processes)
-        ip_array = ip.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
-        print "Building the input array for %s using %s processors" % (basename, processes)
-        ctrl_array = ctrl.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
-        
-        # Normalize to library size
-        ip_array /= ip.mapped_read_count() / 1e6
-        ctrl_array /= ctrl.mapped_read_count() / 1e6
+        if bw is not None:
+            bw = metaseq.genomic_signal(bw, 'bigwig')
+            print "Building array based on provided bigwig file for %s using %s processors" % (basename, processes)
+            bw_array = bw.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
+            persistence.save_features_and_arrays(
+                    features = features,
+                    arrays={'bw': bw_array},
+                    prefix = basename,
+                    link_features = True,
+                    overwrite = True)
+            print "Done"
+        else:
+            # Read in bam files
+            ip = metaseq.genomic_signal(ip, 'bam')
+            ctrl = metaseq.genomic_signal(ctrl, 'bam')
+            
+            # Create arrays in parallel
+            print "Building the IP array for %s using %s processors" % (basename, processes)
+            ip_array = ip.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
+            print "Building the input array for %s using %s processors" % (basename, processes)
+            ctrl_array = ctrl.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
+            
+            # Normalize to library size
+            ip_array /= ip.mapped_read_count() / 1e6
+            ctrl_array /= ctrl.mapped_read_count() / 1e6
 
-        # Cache to disk (will be saved as "example.npz" and "example.features")
-        persistence.save_features_and_arrays(
-                features = features,
-                arrays={'ip': ip_array, 'input': ctrl_array},
-                prefix = basename,
-                link_features = True,
-                overwrite = True)
-        print "done"
+            # Cache to disk (will be saved as "example.npz" and "example.features")
+            persistence.save_features_and_arrays(
+                    features = features,
+                    arrays={'ip': ip_array, 'input': ctrl_array},
+                    prefix = basename,
+                    link_features = True,
+                    overwrite = True)
+            print "Done"
     else:
-        print ".npz already exists; using that"
-    return;# }}}
+        print ".npz already exists for %s using that" % output
+    return;
+# }}}
 
 # # Create database from ensembl GTF if it does not already exist# {{{
 def create_features():
@@ -259,6 +278,7 @@ def create_features():
         filtered_out_genes = genes.filter(lambda gene: gene.name in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.genes-filtered-out.gtf'))
 
         filtered_genes = genes.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
+        correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
         filtered_upstream = upstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
         filtered_downstream = downstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
     else:
@@ -271,7 +291,7 @@ def create_features():
 
 # }}}
 
-# For each bam calculate signal and plot it# {{{
+# For each bam calculate signal # {{{
 def main():
 
     # Create genomic_signal objects that point to data files
