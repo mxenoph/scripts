@@ -1,0 +1,17 @@
+#!/bin/zsh                                                                                                   
+
+SESSION="default"
+tmux has-session -t $SESSION &> /dev/null
+
+if [ $? != 0 ]
+    then
+    tmux new-session -s $SESSION -n home -d
+    tmux new-window -t $SESSION:2 -n "wdr"
+    tmux send-keys -t $SESSION:2 'cd /nfs/research2/bertone/user/mxenoph/hendrich; clear' C-m
+    tmux new-window -t $SESSION:3 -n "nobackup"
+    tmux send-keys -t $SESSION:3 'cd /gpfs/nobackup/bertone/user/mxenoph/; clear' C-m
+    tmux new-window -t $SESSION:4 -n "vim"
+    tmux send-keys -t $SESSION:4 vim C-m
+fi
+
+tmux attach -t $SESSION
