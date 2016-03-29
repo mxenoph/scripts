@@ -12,8 +12,8 @@ import os, sys, argparse, re
 from time import gmtime, strftime
 import gffutils
 import pybedtools
-import metaseq
-from pylab import *
+#import metaseq
+#from pylab import *
 from pybedtools.featurefuncs import TSS
 from pybedtools.featurefuncs import less_than
 from pybedtools.featurefuncs import greater_than
@@ -22,8 +22,8 @@ from gffutils.helpers import asinterval# }}}
 # Parsing command line arguments and creating output subdirectories# {{{
 parser = argparse.ArgumentParser()
 # Required arguments
-parser.add_argument('-i', '--ip', nargs = '+', metavar = "file", type = str, required = True, help = 'One or more treated(IP) bam files')
-parser.add_argument('-c', '--ctrl', nargs = '+', metavar = "file", type = str, required = True, help = 'Control bam files')
+parser.add_argument('-i', '--ip', nargs = '+', metavar = "file", type = str, required = True, help = 'One or more treated(IP) bam files, or bigwig files if -b flag is set')
+parser.add_argument('-c', '--ctrl', nargs = '+', metavar = "file", type = str, required = False,  help = 'Control bam files')
 parser.add_argument('-o', '--out_dir', metavar ="path", type = str, required = True)
 parser.add_argument('--fs', required = False, default = 200, help = "Fragment size from library preparation")
 parser.add_argument('-u', '--upstream', required = False, default = 2000, help = "bp upstream of tss/peak centre")
@@ -38,6 +38,9 @@ parser.add_argument('-m', '--force', action='store_true', default=False, help="I
 parser.add_argument('-b', '--bigwig', action='store_true', default=False, help="If set to true then files passed are bigwig files")
 
 args = parser.parse_args()
+
+if args.bigwig is False and args.ctrl is None:
+    parser.error("You have not provided a control file and the -b flag is not set.")
 
 if not args.out_dir.endswith(os.sep):
     args.out_dir = args.out_dir + os.sep
@@ -103,6 +106,12 @@ def tss_generator(database):# {{{
             
 # }}}
 
+# For comparing versions.
+def cmp_version(version1, version2):
+    def normalize(v):
+        return [int(x) for x in re.sub(r'(\.0+)*$','', v).split(".")]
+    return cmp(normalize(version1), normalize(version2))
+
 # when using filter from pybedtools it does not correctly write the gtf and it can not find the attribute gene_id afterwards# {{{
 def correct_bedtools_output(filename):
     with open(filename, 'r') as f:
@@ -116,7 +125,7 @@ def correct_bedtools_output(filename):
 # }}}
 
 # Create arrays in parallel, and save to disk for later # {{{
-def count_tags (bigwig = None, ip = None, ctrl = None, features, description):
+def count_tags(features, description, bw = None, ip = None, ctrl = None):
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
     assert bw is not None or (ip is not None and ctrl is not None), \
             "Provide either one normalised bigwig or BAM files for IP and control."
@@ -138,6 +147,7 @@ def count_tags (bigwig = None, ip = None, ctrl = None, features, description):
     basename = basename + '.' + description
     output = basename + '.npz'
     print 'Output: %s' % output
+    return()
     
     # Calculate number of bins depending on feature# {{{
     pattern = re.compile('(\d+)-(\w+)-(\d+)')
@@ -230,8 +240,6 @@ def create_features():
         # A BedTool made out of a generator, and saved to file.
         print "Creating genes: %s " % filename
         genes = pybedtools.BedTool(genes_generator(db)).saveas(filename)
-#        genes = pybedtools.BedTool(gff_filename)\
-#                        .saveas(filename)
     else:
         genes = pybedtools.BedTool(filename)
                 
@@ -278,9 +286,16 @@ def create_features():
         filtered_out_genes = genes.filter(lambda gene: gene.name in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.genes-filtered-out.gtf'))
 
         filtered_genes = genes.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
-        correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
+        if cmp_version(pybedtools.__version__, '0.6.9') <= 0:
+            correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
+
         filtered_upstream = upstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
+        if cmp_version(pybedtools.__version__, '0.6.9') <= 0:
+            correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
+
         filtered_downstream = downstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
+        if cmp_version(pybedtools.__version__, '0.6.9') <= 0:
+            correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
     else:
         filtered_genes = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
         filtered_upstream = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
@@ -294,21 +309,26 @@ def create_features():
 # For each bam calculate signal # {{{
 def main():
 
+    print 'Calling create_features() ...'
+    features = create_features()
+
     # Create genomic_signal objects that point to data files
     for i in range(len(args.ip)):
-        if len(args.ip) == len(args.ctrl):
-            bams = {'ip':args.ip[i], 'ctrl':args.ctrl[i]}
-            print 'Same number of IP and input BAM bams provided. Assuming consistency in listing bams.'
-            print 'Counting tags for IP: %(ip)s and Input: %(ctrl)s' % bams
-        elif len(args.ctrl) == 1:
-            bams = {'ip':args.ip[i], 'ctrl':args.ctrl[0]}
-            print 'Only one input BAM file provided; this is used to correct background noise for all IP BAM bams.'
-            print 'Counting tags for IP: %(ip)s and Input: %(ctrl)s' % bams
-        else:
-            print 'Different number of IP and input BAM bams provided. I do not know how these experiments are associated.'
 
-        print 'Calling create_features() ...'
-        features = create_features()
+        if args.bigwig:
+            count_tags(bw = args.ip[i], features = features['gene_start'], description = str(args.upstream) + '-gene_start-' + str(args.downstream))
+        else:
+            if len(args.ip) == len(args.ctrl):
+                bams = {'ip':args.ip[i], 'ctrl':args.ctrl[i]}
+                print 'Same number of IP and input BAM bams provided. Assuming consistency in listing bams.'
+                print 'Counting tags for IP: %(ip)s and Input: %(ctrl)s' % bams
+            elif len(args.ctrl) == 1:
+                bams = {'ip':args.ip[i], 'ctrl':args.ctrl[0]}
+                print 'Only one input BAM file provided; this is used to correct background noise for all IP BAM bams.'
+                print 'Counting tags for IP: %(ip)s and Input: %(ctrl)s' % bams
+            else:
+                print 'Different number of IP and input BAM bams provided. I do not know how these experiments are associated.'
+
 #        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
 #                features = features['gene_start'], description = str(args.upstream) + '-gene_start-' + str(args.downstream))
 #
@@ -318,15 +338,15 @@ def main():
 #        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
 #                features = features['genes'], description = 'genes' )
 #       
-        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['genes-filtered'], description = 'genes-filtered' )
-
-        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['upstream-filtered'], description = '5000-gene_start' )
-       
-        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-                features = features['downstream-filtered'], description = 'gene_end-5000' )
-        
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['genes-filtered'], description = 'genes-filtered' )
+#
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['upstream-filtered'], description = '5000-gene_start' )
+#       
+#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+#                features = features['downstream-filtered'], description = 'gene_end-5000' )
+#        
         if not args.regions:
             print 'Regions not provided'
         else:
