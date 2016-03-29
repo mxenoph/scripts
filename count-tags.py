@@ -135,7 +135,8 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
     # multiprocessing.cpu_count() gives the allocated number of cores, so if used with LSF this will 
     # return the number of cores on the host -- not good practice
     # processes = multiprocessing.cpu_count()
-    processes = int(os.environ["LSB_DJOB_NUMPROC"])
+    #processes = int(os.environ["LSB_DJOB_NUMPROC"])
+    processes = int(2)
     print 'Counting tags...'
 
     if bw is not None:
@@ -310,13 +311,14 @@ def create_features():
 def main():
 
     print 'Calling create_features() ...'
-    features = create_features()
+    #features = create_features()
+    features = pybedtools.BedTool(args.gtf)
 
     # Create genomic_signal objects that point to data files
     for i in range(len(args.ip)):
 
         if args.bigwig:
-            count_tags(bw = args.ip[i], features = features['gene_start'], description = str(args.upstream) + '-gene_start-' + str(args.downstream))
+            count_tags(bw = args.ip[i], features = features, description = 'gene_filtered')
         else:
             if len(args.ip) == len(args.ctrl):
                 bams = {'ip':args.ip[i], 'ctrl':args.ctrl[i]}
