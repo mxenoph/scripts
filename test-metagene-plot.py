@@ -386,8 +386,29 @@ def plot_metagene(narray, features, label = None, subsets = None):
     pp.close()
 # }}}
 
+# match_array_features: fset is a dataframe with indeces the gene_ids# {{{
+def match_array_features(array, features, fset):
+    fset_order = fset.index
+    # Filtering based on original order as reindexing in line 173 will result in all features in array been represented in fset
+    keep = [i for i, gene in enumerate(features) if gene.name in fset_order]
+    # subset array and features
+    s_array = array[keep]
+    s_features = features.filter(lambda gene: gene.name in fset.index).saveas()
+
+    fset_set = fset.reindex_to(s_features, attribute = 'gene_id')
+    print "Features originally in array: %s \nFeatures in file provided: %s.\nFeatures removed from array: %s" % (array.shape[0], len(fset), array.shape[0] - len(fset_set))
+    # If I do not write the feature_ids to variable and retrieve them on the fly in the tuple, it takes a long time
+    feature_ids = [g.name for g in features]
+    tmp = [x for x in fset.index if x not in feature_ids]
+    print "Features removed from subsetting file %s:" % len(tmp)
+
+    return {'s_array':s_array, 's_features':s_features, 's_fset':fset_set, 'fset_order': fset_order}
+# }}}
+
 # Plotting metagene# {{{
-def plot_metagene2(narray, features, label = None, subsets = None):
+def plot_metagene2(narray, features, label = None, fsets = None):
+
+    # Default params# {{{
     arguments = {
             'vmin':5, 'vmax':95, 'percentile':True,
             'figsize':(5, 8),
@@ -403,53 +424,97 @@ def plot_metagene2(narray, features, label = None, subsets = None):
     window = np.linspace(-5000, 0, int(int(5000)/10))
     window = np.append(window, np.linspace(0,1000,1000))
     window = np.append(window, np.linspace(1000,6000,int(int(5000)/10)))
-    arguments['x'] = window
+    arguments['x'] = window# }}}
 
     pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '-profiles.pdf')
     
     print "Plotting without subsetting or reordering"
     fig = metaseq.plotutils.imshow(narray, features = features, **arguments)
-    fig = format_axes(fig, name = label)
+    fig = format_axes(fig, name = label + ' (' + str(narray.shape[0]) + ' features)')
     pp.savefig(fig)
     plt.close(fig)
 
-    if subsets is not None:
-        assert type(subsets) is not 'metaseq.results_table.ResultsTable', \
-                'Subsets passed is not a table.'
+    if fsets is not None:
+        assert type(fsets) is not 'metaseq.results_table.ResultsTable', \
+                'fsets passed is not a table.'
 
-        assert len([i for i in ['groups', 'expression', 'order'] if i in list(subsets.columns.values)]) != 0, \
+        assert len([i for i in ['groups', 'expression', 'order'] if i in list(fsets.columns.values)]) != 0, \
                 'Table does not contain any column that I know how to handle'
 
-        subsets_original_order = subsets.index
-        if len(features) != len(subsets): # {{{
-            # Filtering based on original order as reindexing in line 173 will result in all features in array been represented in subsets
-            array_indices_to_keep = [i for i, gene in enumerate(features) if gene.name in subsets_original_order]
-            narray_subset = narray[array_indices_to_keep]
-            features_subset = features.filter(lambda gene: gene.name in subsets.index).saveas()
-            subsets_set = subsets.reindex_to(features_subset, attribute = 'gene_id')
-            print "Features originally in array: %s \nFeatures in file provided: %s.\nFeatures removed from array: %s" % (narray.shape[0], len(subsets), narray.shape[0] - len(subsets_set))
-            # If I do not write the feature_ids to variable and retrieve them on the fly in the tuple, it takes a long time
-            feature_ids = [g.name for g in features]
-            tmp = [x for x in subsets.index if x not in feature_ids]
-            print "Features removed from subsetting file %s features present in subseting file:" % len(tmp)
+        # Making sure that fsets and array have the same dimensions# {{{
+        if len(features) != len(fsets):
+            print "From now on working with sub-setted array and features."
+            s_array_and_features = match_array_features(array = narray, features = features, fset = fsets)
             
+            narray = s_array_and_features['s_array']
+            features = s_array_and_features['s_features']
+            fsets = s_array_and_features['s_fset']
+            fset_order = s_array_and_features['fset_order']
 
-            # zip(a, b) combines two equal-length lists and merges them together in pairs. e.g a = ['a', 'b'] and b = [1, 2] zip(a,b) = [('a',1), ('b',2)]
-            # will return True only for those indeces where the gene_id in both features and subset file are the same. If subsets is ordered as features 
-            # will return True for len(features) = len(subsets)
-            if len(features) != len([True for i,j in zip(subsets.index, [gene.name for gene in features]) if i==j]):
-                print "Features provided in subset file are not ordered as array. Re-indexing"
-                subsets = subsets.reindex_to(features, attribute = 'gene_id')
-                print "Subsets length after reindexing (line 183)"
-
-            print "Plotting with subsetting. Features in array: %s" % narray_subset.shape[0]
-            fig = metaseq.plotutils.imshow(narray_subset, features = features_subset, **arguments)
-            fig = format_axes(fig, name = label + '_subset')
+            # There is no point in plotting the heatmap again if the array is not sub-setted.
+            # Reindexing is done in match_array_features(), but if dimensions are the same it's done in else condition 
+            # before continuing with any grouping etc
+            fig = metaseq.plotutils.imshow(narray, features = features, **arguments)
+            fig = format_axes(fig, name = label + ' (' + str(narray.shape[0]) + ' features)')
             pp.savefig(fig)
             plt.close(fig)
+        else:
+            print "Re-indexing fsets provided."
+            fsets = fsets.reindex_to(features, attribute = 'gene_id')
+
+        # }}}
+
+        if 'groups' in list(fsets.columns.values): # {{{
+            print "plot_metagene(): subsetting based on groups provided"
+            # For getting the groups keep only those indeces that were in the original subset order, otherwise
+            # gene_ids in the array but not the subset file will produce nan. That makes it trickier to remove and fix
+            # downstream, expecially if I ever want a group to be named nan in the fsets file
+            #groups = fsets.iloc[fsets.index.isin(fsets_original_order)].groups.unique()
+            groups = fsets.groups.unique()
+            print 'Printing groups %s' % groups
+            cls = np.zeros(len(narray)).astype('str')
+            print "cls length: %s fsets length: %s" % (len(cls), len(fsets))
+            
+            # The numpy arrays for each group label will have the same length as len(features) == len(fsets),
+            # and same order because fsets was reindexed before.
+            subset = []
+            for g in groups:
+                subset.append((str(g), (fsets.groups == g).values))
+            
+            # Redundant as check done in match_array_features()
+#            if not all(fsets.index.isin(fsetorder)):
+#                print "Features in the array are missing from the fsets file. Group those together under the UNK group"
+#                subset.append(('UNK group', ~(fsets.index.isin(fset_order))))
+#                groups = np.append(groups, 'UNK group')
+
+            for lab, ind in subset:
+                cls[ind] = str(lab)
+            # if group names are numbers then if 0 is a group asset will fail even if all features are assigned to a group
+            assert sum(cls == '0.0') == 0
+
+            s_arguments  = arguments
+            # Saving groups and fsets to arguments for plotutils
+            s_arguments['subset_by'] = cls
+            s_arguments['subset_order'] = map(str, sorted(groups))
+
+            s_arguments['line_kwargs'] = []
+            s_arguments['fill_kwargs'] = []
+            colors = get_N_HexCol(len(groups))
+            
+            for i, g in enumerate(groups):
+                s_arguments['line_kwargs'].append(dict(color=colors[i], label = g))
+                s_arguments['fill_kwargs'].append(dict(color=colors[i], alpha = 0.3))
+            
+            s_fig = metaseq.plotutils.imshow(narray, **s_arguments)
+            s_fig = format_axes(s_fig, name = label + ' (' + str(narray.shape[0]) + ' features)',
+                                by = s_arguments['subset_by'], order = s_arguments['subset_order'])
+            pp.savefig(s_fig)
+            plt.close(s_fig)
+            pp.close()
         # }}}
 
     pp.close()
+    return {'narray': narray, 'features': features, 'fsets': fsets, 'fset_order':fset_order}
 # }}}
 
 def plot_array(array, features, pp, label = None):# {{{
@@ -525,12 +590,12 @@ print "Subset file len(features): %s len(annotation):  %s" % (len(expression), l
 
 narray = np.concatenate((normalised_arrays['7E12_2i-Chd4_pooled_ddup.5000-gene_start'], normalised_arrays['7E12_2i-Chd4_pooled_ddup.genes-filtered'], normalised_arrays['7E12_2i-Chd4_pooled_ddup.gene_end-5000']), axis=1)
 label = os.path.splitext(normalised_arrays.keys()[0])[0]
-#plot_metagene(narray = narray, features = features, label = label, subsets = expression)
-plot_metagene2(narray = narray, features = features, label = label, subsets = expression)
+#plot_metagene(narray = narray, features = features, label = label, fsets = expression)
+test = plot_metagene2(narray = narray, features = features, label = label, fsets = expression)
 
-pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '_sep_array_test' + '-profiles.pdf')
-plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.5000-gene_start'], features = features, pp = pp, label = '5000-gene_start')
-plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.gene_end-5000'], features = features, pp = pp, label = 'gene_end-5000')
-plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.genes-filtered'], features = features, pp = pp, label = 'genes-filtered')
-pp.close()
+#pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '_sep_array_test' + '-profiles.pdf')
+#plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.5000-gene_start'], features = features, pp = pp, label = '5000-gene_start')
+#plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.gene_end-5000'], features = features, pp = pp, label = 'gene_end-5000')
+#plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.genes-filtered'], features = features, pp = pp, label = 'genes-filtered')
+#pp.close()
 
