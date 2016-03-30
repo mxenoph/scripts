@@ -1,4 +1,4 @@
-#!/usr//bin/env/ python
+#!/usr/bin/env python
 
 # Import modules# {{{
 # Needed for division to return float
@@ -17,9 +17,9 @@ from gffutils.helpers import asinterval# }}}
 
 warnings.simplefilter("error")
 
-files=[ '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/profiles/7E12_2i-M2_0_ddup.genes-filtered.npz',
-        '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/profiles/7E12_2i-M2_0_ddup.5000-gene_start.npz',
-        '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/profiles/7E12_2i-M2_0_ddup.gene_end-5000.npz']
+files=[ '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/profiles/7E12_2i-Chd4_pooled_ddup.genes-filtered.npz',
+        '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/profiles/7E12_2i-Chd4_pooled_ddup.5000-gene_start.npz',
+        '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/profiles/7E12_2i-Chd4_pooled_ddup.gene_end-5000.npz']
 
 def get_N_HexCol(N=15):# {{{
     import colorsys
@@ -31,110 +31,216 @@ def get_N_HexCol(N=15):# {{{
     return hex_out
 # }}}
 
-# Plotting metagene# {{{
-def plot_metagene(narray, features, label = None, subsets = None):
-    def format_axes(figure, name, by = None, order = None, expression = None, quantiles = None):# {{{
-        figure.line_axes.axis('tight')
-        for ax in [figure.line_axes, figure.array_axes]:
-            ax.axvline(0, color='k', linestyle='--')
-            
-        # Label axes
-        figure.array_axes.set_title(name)
-        figure.array_axes.set_ylabel("Genes")
-
-        figure.line_axes.set_ylabel("Average enrichment (IP - input)\n RPMMR")
-        figure.line_axes.set_xlabel("Metagenes ")
-
-        # Line at the TTS -- grey
-        figure.line_axes.axvline(0, color='k', linestyle=':')
-        figure.line_axes.axvline(100, color='c', linestyle=':')
-
-        figure.cax.set_ylabel("RPMMR")
+def format_default_axes(figure, sample, feature_name = "Genes"):# {{{
+    figure.line_axes.axis('tight')
+    for ax in [figure.line_axes, figure.array_axes]:
+        ax.axvline(0, color='k', linestyle='--')
         
-        # Remove ticks from heatmap x axis
-        for tick in figure.array_axes.get_xticklabels():
-            tick.set_visible(False)
+    # Label axes
+    figure.array_axes.set_title(sample)
+    figure.array_axes.set_ylabel("Genes")
 
-        # Add average plot per subsets
-        if by is not None and order is not None:# {{{
-            print "In format_axes subsets"
-            metaseq.plotutils.add_labels_to_subsets(
-                    figure.array_axes,
-                    subset_by = by,
-                    subset_order = order)
-            figure.line_axes.legend(loc ='best', frameon = False)
-        # }}}
+    figure.line_axes.set_ylabel("Average enrichment (IP - input)\n RPMMR")
+    figure.line_axes.set_xlabel(feature_name)
 
-        if expression is not None:# {{{
-            print "Formatting expression panel"
-            # Axes limit tweaks
-            figure.strip_axes.axis('tight')
-            figure.strip_axes.axis(xmin = 0)
+    # Line at the TTS -- grey
+    figure.line_axes.axvline(0, color='k', linestyle=':')
+    figure.line_axes.axvline(100, color='c', linestyle=':')
 
-            # Remove all edges but the bottom x-axis.
-            figure.strip_axes.yaxis.set_visible(False)
-            figure.strip_axes.spines['top'].set_visible(False)
-            figure.strip_axes.spines['right'].set_visible(False)
-            figure.strip_axes.spines['left'].set_visible(False)
-            figure.strip_axes.xaxis.set_ticks_position('bottom')
+    figure.cax.set_ylabel("RPMMR")
+    
+    # Remove ticks from heatmap x axis
+    for tick in figure.array_axes.get_xticklabels():
+        tick.set_visible(False)
 
-            figure.strip_axes.set_xlabel('log(FPKM)')
-            figure.strip_axes.xaxis.set_major_locator(
-                matplotlib.ticker.MaxNLocator(nbins = 2, prune = None))
+    figure.subplots_adjust(left = 0.2, right = 0.8, hspace = 0.05, top = 0.95)
 
-            # Plot expression data in the right-most panel
-            figure.strip_axes.fill_betweenx(
-                    x1 = sorted(expression),
-                    y = np.arange(len(expression)),
-                    x2 = 0,
-                    color = '.5')
+    # Positioning the colobar axes took some tweaking:
+    figure.cax.set_position([0.75, .15, .05, .10])
+    figure.set_facecolor('w')
 
-            # If information about silent, Q1-Q4 genes is given add a subplot to the figure
-            if quantiles is not None:
-                qlabel = {
-                            0: 'silent',
-                            1: '0-25%', # Coming from rscript 1 is Q1, 2 is Q2 etc
-                            2: '25-50%',
-                            3: '50-75%',
-                            4: '75-100%'}
-                # Create linearly spaced colors along a colormap, but with some padding at
-                # the beginning to avoid too-light colors.
-                quantile_colors = matplotlib.cm.YlOrBr(np.linspace(.5, 1, 4 + 1))
-                uquantiles = sorted(list(set(quantiles)))
-                
-                # Create another axes along the bottom.
-                quantile_ax = plt.subplot(figure.gs[2, 0])
-                # Plot the quantile lines as different colors
-                for q, color in zip(uquantiles, quantile_colors)[::-1]:
-                    ind = (quantiles == q).values
-                    metaseq.plotutils.ci_plot(
-                            np.arange(700),
-                            narray[ind, :],
-                            ax = quantile_ax,
-                            line_kwargs = dict(color = color, label = qlabel[q], alpha = 0.5),
-                            fill_kwargs = dict(color = color, label = qlabel[q], alpha = 0.3)
-                        )
-                
-                    # Axes configure on the bottom axes.
-                #    bottom_ax.set_xticks(ticks)
-                #    bottom_ax.set_xticklabels(ticklabels)
-                #    for txt, ha in zip(bottom_ax.get_xticklabels(), alignment):
-                #        txt.set_horizontalalignment(ha)
-                #    bottom_ax.axis('tight')
-                #    bottom_ax.axvline(100, **border_style)
-                #    bottom_ax.axvline(600, **border_style)
-                #    bottom_ax.legend(loc='best', fontsize=8, frameon=False, labelspacing=0.4)
-                #    bottom_ax.set_ylabel('Enrichment\n(RPMMR)')# }}}
-
-        figure.subplots_adjust(left = 0.2, right = 0.8, hspace = 0.05, top = 0.95)
-
-        # Positioning the colobar axes took some tweaking:
-        figure.cax.set_position([0.75, .15, .05, .10])
-        figure.set_facecolor('w')
-
-        return(figure)
+    return(figure)
 # }}}
 
+def format_subsets_axes(figure, by, order):# {{{
+    # Add average plot per subsets
+    print "In format_axes subsets"
+    metaseq.plotutils.add_labels_to_subsets(
+            figure.array_axes,
+            subset_by = by,
+            subset_order = order)
+    figure.line_axes.legend(loc ='best', frameon = False)
+    return(figure)
+# }}}
+
+def format_expression_axes(figure, expression, quantiles = None):# {{{
+    print "Formatting expression panel"
+    # Axes limit tweaks
+    figure.strip_axes.axis('tight')
+    figure.strip_axes.axis(xmin = 0)
+
+    # Remove all edges but the bottom x-axis.
+    figure.strip_axes.yaxis.set_visible(False)
+    figure.strip_axes.spines['top'].set_visible(False)
+    figure.strip_axes.spines['right'].set_visible(False)
+    figure.strip_axes.spines['left'].set_visible(False)
+    figure.strip_axes.xaxis.set_ticks_position('bottom')
+
+    figure.strip_axes.set_xlabel('log(FPKM)')
+    figure.strip_axes.xaxis.set_major_locator(
+        matplotlib.ticker.MaxNLocator(nbins = 2, prune = None))
+
+    # Plot expression data in the right-most panel
+    figure.strip_axes.fill_betweenx(
+            x1 = sorted(expression),
+            y = np.arange(len(expression)),
+            x2 = 0,
+            color = '.5')
+
+    # If information about silent, Q1-Q4 genes is given add a subplot to the figure
+    if quantiles is not None:
+        qlabel = {
+                    0: 'silent',
+                    1: '0-25%', # Coming from rscript 1 is Q1, 2 is Q2 etc
+                    2: '25-50%',
+                    3: '50-75%',
+                    4: '75-100%'}
+        # Create linearly spaced colors along a colormap, but with some padding at
+        # the beginning to avoid too-light colors.
+        quantile_colors = matplotlib.cm.YlOrBr(np.linspace(.5, 1, 4 + 1))
+        uquantiles = sorted(list(set(quantiles)))
+        
+        # Create another axes along the bottom.
+        quantile_ax = plt.subplot(figure.gs[2, 0])
+        # Plot the quantile lines as different colors
+        for q, color in zip(uquantiles, quantile_colors)[::-1]:
+            ind = (quantiles == q).values
+            metaseq.plotutils.ci_plot(
+                    np.arange(700),
+                    narray[ind, :],
+                    ax = quantile_ax,
+                    line_kwargs = dict(color = color, label = qlabel[q], alpha = 0.5),
+                    fill_kwargs = dict(color = color, label = qlabel[q], alpha = 0.3)
+                )
+    
+        # Axes configure on the bottom axes.
+#        bottom_ax.set_xticks(ticks)
+#        bottom_ax.set_xticklabels(ticklabels)
+#        for txt, ha in zip(bottom_ax.get_xticklabels(), alignment):
+#            txt.set_horizontalalignment(ha)
+#        bottom_ax.axis('tight')
+#        bottom_ax.axvline(100, **border_style)
+#        bottom_ax.axvline(600, **border_style)
+#        bottom_ax.legend(loc='best', fontsize=8, frameon=False, labelspacing=0.4)
+#        bottom_ax.set_ylabel('Enrichment\n(RPMMR)')
+    
+    return(figure)
+# }}}
+
+def format_axes(figure, name, by = None, order = None, expression = None, quantiles = None):# {{{
+    figure.line_axes.axis('tight')
+    for ax in [figure.line_axes, figure.array_axes]:
+        ax.axvline(0, color='k', linestyle='--')
+        
+    # Label axes
+    figure.array_axes.set_title(name)
+    figure.array_axes.set_ylabel("Genes")
+
+    figure.line_axes.set_ylabel("Average enrichment (IP - input)\n RPMMR")
+    figure.line_axes.set_xlabel("Metagenes ")
+
+    # Line at the TTS -- grey
+    figure.line_axes.axvline(0, color='k', linestyle=':')
+    figure.line_axes.axvline(100, color='c', linestyle=':')
+
+    figure.cax.set_ylabel("RPMMR")
+    
+    # Remove ticks from heatmap x axis
+    for tick in figure.array_axes.get_xticklabels():
+        tick.set_visible(False)
+
+    # Add average plot per subsets
+    if by is not None and order is not None:# {{{
+        print "In format_axes subsets"
+        metaseq.plotutils.add_labels_to_subsets(
+                figure.array_axes,
+                subset_by = by,
+                subset_order = order)
+        figure.line_axes.legend(loc ='best', frameon = False)
+    # }}}
+
+    if expression is not None:# {{{
+        print "Formatting expression panel"
+        # Axes limit tweaks
+        figure.strip_axes.axis('tight')
+        figure.strip_axes.axis(xmin = 0)
+
+        # Remove all edges but the bottom x-axis.
+        figure.strip_axes.yaxis.set_visible(False)
+        figure.strip_axes.spines['top'].set_visible(False)
+        figure.strip_axes.spines['right'].set_visible(False)
+        figure.strip_axes.spines['left'].set_visible(False)
+        figure.strip_axes.xaxis.set_ticks_position('bottom')
+
+        figure.strip_axes.set_xlabel('log(FPKM)')
+        figure.strip_axes.xaxis.set_major_locator(
+            matplotlib.ticker.MaxNLocator(nbins = 2, prune = None))
+
+        # Plot expression data in the right-most panel
+        figure.strip_axes.fill_betweenx(
+                x1 = sorted(expression),
+                y = np.arange(len(expression)),
+                x2 = 0,
+                color = '.5')
+
+        # If information about silent, Q1-Q4 genes is given add a subplot to the figure
+        if quantiles is not None:
+            qlabel = {
+                        0: 'silent',
+                        1: '0-25%', # Coming from rscript 1 is Q1, 2 is Q2 etc
+                        2: '25-50%',
+                        3: '50-75%',
+                        4: '75-100%'}
+            # Create linearly spaced colors along a colormap, but with some padding at
+            # the beginning to avoid too-light colors.
+            quantile_colors = matplotlib.cm.YlOrBr(np.linspace(.5, 1, 4 + 1))
+            uquantiles = sorted(list(set(quantiles)))
+            
+            # Create another axes along the bottom.
+            quantile_ax = plt.subplot(figure.gs[2, 0])
+            # Plot the quantile lines as different colors
+            for q, color in zip(uquantiles, quantile_colors)[::-1]:
+                ind = (quantiles == q).values
+                metaseq.plotutils.ci_plot(
+                        np.arange(700),
+                        narray[ind, :],
+                        ax = quantile_ax,
+                        line_kwargs = dict(color = color, label = qlabel[q], alpha = 0.5),
+                        fill_kwargs = dict(color = color, label = qlabel[q], alpha = 0.3)
+                    )
+            
+                # Axes configure on the bottom axes.
+            #    bottom_ax.set_xticks(ticks)
+            #    bottom_ax.set_xticklabels(ticklabels)
+            #    for txt, ha in zip(bottom_ax.get_xticklabels(), alignment):
+            #        txt.set_horizontalalignment(ha)
+            #    bottom_ax.axis('tight')
+            #    bottom_ax.axvline(100, **border_style)
+            #    bottom_ax.axvline(600, **border_style)
+            #    bottom_ax.legend(loc='best', fontsize=8, frameon=False, labelspacing=0.4)
+            #    bottom_ax.set_ylabel('Enrichment\n(RPMMR)')# }}}
+
+    figure.subplots_adjust(left = 0.2, right = 0.8, hspace = 0.05, top = 0.95)
+
+    # Positioning the colobar axes took some tweaking:
+    figure.cax.set_position([0.75, .15, .05, .10])
+    figure.set_facecolor('w')
+
+    return(figure)
+# }}}
+
+# Plotting metagene# {{{
+def plot_metagene(narray, features, label = None, subsets = None):
     arguments = {
             'vmin':5, 'vmax':95, 'percentile':True,
             'figsize':(5, 8)
@@ -143,9 +249,9 @@ def plot_metagene(narray, features, label = None, subsets = None):
     plt.rcParams['font.family'] = 'Sans'
     plt.rcParams['font.size'] = 10
 
-    window = np.linspace(-5000, 0, 500)
-    window = np.append(window, np.linspace(0,100,100))
-    window = np.append(window, np.linspace(100,5000,500))
+    window = np.linspace(-5000, 0, int(int(5000)/10))
+    window = np.append(window, np.linspace(0,1000,1000))
+    window = np.append(window, np.linspace(1000,6000,int(int(5000)/10)))
     arguments['x'] = window
 
     pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '-profiles.pdf')
@@ -161,17 +267,18 @@ def plot_metagene(narray, features, label = None, subsets = None):
         if len(features) != len(subsets): # {{{
             tmp = [g.name for g in features if g.name not in subsets.index]
             print "%s features in array are not present in subseting file. These will be presented as the UNK group when grouping or ignored when ordering heatmap." % len(tmp)
-            # Joining the 2 tuples. tmp contains the genes to be filtered out
-            tmp = [x for x in subsets.index if x not in [g.name for g in features]]
+            # If I do not write the feature_ids to variable and retrieve them on the fly in the tuple, it takes a long time
+            feature_ids = [g.name for g in features]
+            tmp = [x for x in subsets.index if x not in feature_ids]
             print "%s features present in subseting file but not array. These will not be plotted." % len(tmp)
             
-            features_ids = [g.name for g in features]
             # Filtering based on original order as reindexing in line 173 will result in all features in array been represented in subsets
             array_indices_to_keep = [i for i, gene in enumerate(features) if gene.name in subsets_original_order]
             narray_subset = narray[array_indices_to_keep]
             features_subset = features.filter(lambda gene: gene.name in subsets.index).saveas()
             subsets_set = subsets.reindex_to(features_subset, attribute = 'gene_id')
             print "subsets %s subsets_set %s" % (len(subsets), len(subsets_set))
+            print "Should have this many %s features in array" % (len(subsets) - len(subsets_set))
 
             # zip(a, b) combines two equal-length lists and meregs tehm together in pairs. e.g a = ['a', 'b'] and b = [1, 2] zip(a,b) = [('a',1), ('b',2)]
             # will return True only for those indeces where the gene_id in both features and subset file are the same. If subsets is ordered as features 
@@ -179,6 +286,7 @@ def plot_metagene(narray, features, label = None, subsets = None):
             if len(features) != len([True for i,j in zip(subsets.index, [gene.name for gene in features]) if i==j]):
                 print "Features provided in subset file are not ordered as array. Re-indexing"
                 subsets = subsets.reindex_to(features, attribute = 'gene_id')
+                print "Subsets length after reindexing (line 183)"
         # }}}
 
         if 'groups' in list(subsets.columns.values) and False: # {{{
@@ -226,6 +334,8 @@ def plot_metagene(narray, features, label = None, subsets = None):
             fig_subset = format_axes(fig_subset, name = label, by = arguments_subset['subset_by'], order = arguments_subset['subset_order'])
             pp.savefig(fig_subset)
             plt.close(fig_subset)
+            pp.close()
+            return
         # }}}
         
         if 'expression' in list(subsets.columns.values) and False:# {{{
@@ -267,7 +377,7 @@ def plot_metagene(narray, features, label = None, subsets = None):
         print "No csv file provided for subseting or ordering"
         arguments['line_kwargs'] = dict(color = 'k')
         arguments['fill_kwargs'] = dict(color='k', alpha=0.4)
-        fig = metaseq.plotutils.imshow(narray, features = features_subset, **arguments)
+        fig = metaseq.plotutils.imshow(narray, features = features, **arguments)
         fig = format_axes(fig, name = label)
         pp.savefig(fig)
         plt.close(fig)
@@ -275,6 +385,118 @@ def plot_metagene(narray, features, label = None, subsets = None):
 
     pp.close()
 # }}}
+
+# Plotting metagene# {{{
+def plot_metagene2(narray, features, label = None, subsets = None):
+    arguments = {
+            'vmin':5, 'vmax':95, 'percentile':True,
+            'figsize':(5, 8),
+            'line_kwargs': dict(color = 'k'),
+            'fill_kwargs': dict(color='k', alpha=0.4),
+            'fill_kwargs': dict(color='k', alpha=0.4),
+            'sort_by': narray.mean(axis=1)
+            }
+
+    plt.rcParams['font.family'] = 'Sans'
+    plt.rcParams['font.size'] = 10
+
+    window = np.linspace(-5000, 0, int(int(5000)/10))
+    window = np.append(window, np.linspace(0,1000,1000))
+    window = np.append(window, np.linspace(1000,6000,int(int(5000)/10)))
+    arguments['x'] = window
+
+    pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '-profiles.pdf')
+    
+    print "Plotting without subsetting or reordering"
+    fig = metaseq.plotutils.imshow(narray, features = features, **arguments)
+    fig = format_axes(fig, name = label)
+    pp.savefig(fig)
+    plt.close(fig)
+
+    if subsets is not None:
+        assert type(subsets) is not 'metaseq.results_table.ResultsTable', \
+                'Subsets passed is not a table.'
+
+        assert len([i for i in ['groups', 'expression', 'order'] if i in list(subsets.columns.values)]) != 0, \
+                'Table does not contain any column that I know how to handle'
+
+        subsets_original_order = subsets.index
+        if len(features) != len(subsets): # {{{
+            # Filtering based on original order as reindexing in line 173 will result in all features in array been represented in subsets
+            array_indices_to_keep = [i for i, gene in enumerate(features) if gene.name in subsets_original_order]
+            narray_subset = narray[array_indices_to_keep]
+            features_subset = features.filter(lambda gene: gene.name in subsets.index).saveas()
+            subsets_set = subsets.reindex_to(features_subset, attribute = 'gene_id')
+            print "Features originally in array: %s \nFeatures in file provided: %s.\nFeatures removed from array: %s" % (narray.shape[0], len(subsets), narray.shape[0] - len(subsets_set))
+            # If I do not write the feature_ids to variable and retrieve them on the fly in the tuple, it takes a long time
+            feature_ids = [g.name for g in features]
+            tmp = [x for x in subsets.index if x not in feature_ids]
+            print "Features removed from subsetting file %s features present in subseting file:" % len(tmp)
+            
+
+            # zip(a, b) combines two equal-length lists and merges them together in pairs. e.g a = ['a', 'b'] and b = [1, 2] zip(a,b) = [('a',1), ('b',2)]
+            # will return True only for those indeces where the gene_id in both features and subset file are the same. If subsets is ordered as features 
+            # will return True for len(features) = len(subsets)
+            if len(features) != len([True for i,j in zip(subsets.index, [gene.name for gene in features]) if i==j]):
+                print "Features provided in subset file are not ordered as array. Re-indexing"
+                subsets = subsets.reindex_to(features, attribute = 'gene_id')
+                print "Subsets length after reindexing (line 183)"
+
+            print "Plotting with subsetting. Features in array: %s" % narray_subset.shape[0]
+            fig = metaseq.plotutils.imshow(narray_subset, features = features_subset, **arguments)
+            fig = format_axes(fig, name = label + '_subset')
+            pp.savefig(fig)
+            plt.close(fig)
+        # }}}
+
+    pp.close()
+# }}}
+
+def plot_array(array, features, pp, label = None):# {{{
+    arguments = {
+            'vmin':5, 'vmax':95, 'percentile':True,
+            'figsize':(5, 8),
+            'line_kwargs': dict(color = 'k'),
+            'fill_kwargs': dict(color='k', alpha=0.4),
+            'fill_kwargs': dict(color='k', alpha=0.4),
+            'sort_by': array.mean(axis=1)
+            }
+
+    plt.rcParams['font.family'] = 'Sans'
+    plt.rcParams['font.size'] = 10
+
+    # Calculate number of bins depending on feature# {{{
+    pattern = re.compile('(\d+)-(\w+)-(\d+)')
+    # matching will be empty if .genes.features or any other file not in upstream-feature-downstream format
+    matching = pattern.match(label)
+
+    if matching:
+        upstream, feature_type, downstream = matching.groups()
+        # Set the bins such that counting is done for every 10bp window
+        bins = (int(upstream) + int(downstream))/10
+        window = np.linspace(-int(upstream), int(downstream), bins)
+    elif re.compile('(\d+)-(\w+)').match(label) or re.compile('(\w+)-(\d+)').match(label):
+        if re.compile('(\d+)-(\w+)').match(label):
+            upstream, feature_type = re.compile('(\d+)-(\w+)').match(label).groups()
+            bins = int(upstream)/10
+            window = np.linspace(-int(upstream), 0, bins)
+        else:
+            feature_type, downstream = re.compile('(\w+)-(\d+)').match(label).groups()
+            bins = int(downstream)/10
+            window = np.linspace(0, int(downstream), bins)
+    else:
+        # For genes it only makes sense to count every 1% of gene
+        bins = 1000
+        window = np.linspace(0, 100, bins)
+    #}}}
+
+    arguments['x'] = window
+
+    print "For checking how array %s should look before merging." % label
+    fig = metaseq.plotutils.imshow(array, features = features, **arguments)
+    fig = format_default_axes(fig, sample = label, feature_name = label)
+    pp.savefig(fig)
+    plt.close(fig)# }}}
 
 from matplotlib.backends.backend_pdf import PdfPages
 from collections import OrderedDict
@@ -301,7 +523,14 @@ print "Subset file len(features): %s len(annotation):  %s" % (len(expression), l
 #expression = expression.reindex_to(features, attribute='gene_id')
 #print "After reindexing, len(features): %s len(annotation):  %s" % (len(expression), len(features))
 
-narray = np.concatenate((normalised_arrays['7E12_2i-M2_0_ddup.5000-gene_start'], normalised_arrays['7E12_2i-M2_0_ddup.genes-filtered'], normalised_arrays['7E12_2i-M2_0_ddup.gene_end-5000']), axis=1)
+narray = np.concatenate((normalised_arrays['7E12_2i-Chd4_pooled_ddup.5000-gene_start'], normalised_arrays['7E12_2i-Chd4_pooled_ddup.genes-filtered'], normalised_arrays['7E12_2i-Chd4_pooled_ddup.gene_end-5000']), axis=1)
 label = os.path.splitext(normalised_arrays.keys()[0])[0]
-#plot_metagene(narray = narray, expression=expression, label = label )
-plot_metagene(narray = narray, features = features, label = label, subsets = expression)
+#plot_metagene(narray = narray, features = features, label = label, subsets = expression)
+plot_metagene2(narray = narray, features = features, label = label, subsets = expression)
+
+pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '_sep_array_test' + '-profiles.pdf')
+plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.5000-gene_start'], features = features, pp = pp, label = '5000-gene_start')
+plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.gene_end-5000'], features = features, pp = pp, label = 'gene_end-5000')
+plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.genes-filtered'], features = features, pp = pp, label = 'genes-filtered')
+pp.close()
+
