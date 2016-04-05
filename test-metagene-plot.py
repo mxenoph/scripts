@@ -13,13 +13,46 @@ import pybedtools
 import metaseq
 from pylab import *
 from pybedtools.featurefuncs import TSS
-from gffutils.helpers import asinterval# }}}
-
+from gffutils.helpers import asinterval
+from collections import OrderedDict
 warnings.simplefilter("error")
+# }}}
 
-files=[ '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/profiles/7E12_2i-Chd4_pooled_ddup.genes-filtered.npz',
-        '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/profiles/7E12_2i-Chd4_pooled_ddup.5000-gene_start.npz',
-        '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/profiles/7E12_2i-Chd4_pooled_ddup.gene_end-5000.npz']
+# Parsing command line arguments and creating output subdirectories# {{{
+parser = argparse.ArgumentParser()
+# Required arguments
+parser.add_argument('-p', '--path', metavar = "path", type = str, required = True, help = 'Path to search for npz files')
+# Optional arguments
+parser.add_argument('-m', '--matching', type=str, required = True, help = 'Pattern by which to retrieve files from the path. e.g. "*3KO*"',
+        # default pattern set to all so I don't have to write an if else condition for defining files
+        default = "*")
+parser.add_argument('-s', '--subsets', type=str, required = False, help = 'Tab delimited file with gene_id, group columns')
+
+args = parser.parse_args()
+
+if not args.path.endswith(os.sep):
+    args.path = args.path + os.sep
+
+plot_path = args.path + 'plots/'
+
+# Create plot directory if it doesn't exist
+if not os.path.exists(plot_path):
+    os.makedirs(plot_path)
+
+array_order = ['5000-gene_start.npz', 'genes-filtered.npz', 'gene_end-5000.npz']
+tmp = [ os.path.join(args.path, f) for f in os.listdir(args.path) if f.endswith(".npz") and fnmatch.fnmatch(f, args.matching)]
+tmp = [ f for f in tmp if f.endswith('.5000-gene_start.npz') or f.endswith('.genes-filtered.npz') or f.endswith('.gene_end-5000.npz')]
+assert len(tmp) == 3, \
+        'Input arrays provided are not 3.'
+
+# Not the best way but only way I can ensure the order of the arrays in the tuple is gene start, gene, gene end
+files = []
+for m in array_order:
+    for f in tmp:
+        if f.endswith(m):
+            files = files + [f,]
+print files
+#}}}
 
 def get_N_HexCol(N=15):# {{{
     import colorsys
@@ -31,10 +64,12 @@ def get_N_HexCol(N=15):# {{{
     return hex_out
 # }}}
 
-def format_default_axes(figure, sample, feature_name = "Genes"):# {{{
+def format_default_axes(figure, sample, feature_name = "Genes", ticks = [-2000, 0, 500], tick_labels = ['-2Kb', 'TSS', '500bp'], alignment = ['right', 'center', 'right']):# {{{
     figure.line_axes.axis('tight')
     for ax in [figure.line_axes, figure.array_axes]:
-        ax.axvline(0, color='k', linestyle='--')
+        ax.axvline(0, color='k', linestyle=':')
+        if 'TTS' in tick_labels:
+            ax.axvline(ticks[tick_labels.index('TTS')], color='k', linestyle=':')
         
     # Label axes
     figure.array_axes.set_title(sample)
@@ -43,15 +78,17 @@ def format_default_axes(figure, sample, feature_name = "Genes"):# {{{
     figure.line_axes.set_ylabel("Average enrichment (IP - input)\n RPMMR")
     figure.line_axes.set_xlabel(feature_name)
 
-    # Line at the TTS -- grey
-    figure.line_axes.axvline(0, color='k', linestyle=':')
-    figure.line_axes.axvline(100, color='c', linestyle=':')
-
     figure.cax.set_ylabel("RPMMR")
     
     # Remove ticks from heatmap x axis
     for tick in figure.array_axes.get_xticklabels():
         tick.set_visible(False)
+
+    # Set ticks and labels on the average profile plot
+    figure.line_axes.set_xticks(ticks)
+    figure.line_axes.set_xticklabels(tick_labels)
+    for txt, ha in zip(figure.line_axes.get_xticklabels(), alignment):
+        txt.set_horizontalalignment(ha)
 
     figure.subplots_adjust(left = 0.2, right = 0.8, hspace = 0.05, top = 0.95)
 
@@ -62,18 +99,72 @@ def format_default_axes(figure, sample, feature_name = "Genes"):# {{{
     return(figure)
 # }}}
 
-def format_subsets_axes(figure, by, order):# {{{
+def format_subsets_axes(figure, by, order, ncols):# {{{
     # Add average plot per subsets
-    print "In format_axes subsets"
+    print "In format_subsets_axes subsets"
     metaseq.plotutils.add_labels_to_subsets(
             figure.array_axes,
             subset_by = by,
             subset_order = order)
     figure.line_axes.legend(loc ='best', frameon = False)
+
+    box = figure.line_axes.get_position()
+    figure.line_axes.set_position([box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9])
+    figure.line_axes.legend(loc = 'upper center', bbox_to_anchor = (0.5, -0.3), ncol = ncols, frameon = False)
+
     return(figure)
 # }}}
 
-def format_expression_axes(figure, expression, quantiles = None):# {{{
+def plot_subsets_separate(array, arguments, pp, sample, feature_name, ticks = [-2000, 0, 500], tick_labels = ['-2Kb', 'TSS', '500bp'], alignment = ['right', 'center', 'right']):# {{{
+    inds = []
+    for x in arguments['subset_order']:
+        subset_ind = np.nonzero(arguments['subset_by'] == x)[0]
+        subset_sort_by = arguments['sort_by'][subset_ind]
+        subset_argsort_by = np.argsort(subset_sort_by)
+        inds.append(subset_ind[subset_argsort_by])
+    ind = np.concatenate(inds)
+
+    from matplotlib import pyplot as plt
+    plt.rcParams['font.size'] = 11
+    plt.rcParams['legend.scatterpoints'] = 1
+    plt.rcParams['legend.fontsize'] = 10
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    for subset_ind, label, _lkw, _fkw in zip(inds, arguments['subset_order'], arguments['line_kwargs'], arguments['fill_kwargs']):
+        metaseq.plotutils.ci_plot(arguments['x'],
+                array[subset_ind],
+                ax = ax,
+                line_kwargs = _lkw,
+                fill_kwargs = _fkw)
+
+    # http://stackoverflow.com/questions/4700614/how-to-put-the-legend-out-of-the-plot
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9])
+    ax.set_title(sample)
+
+    # Add a vertical line at TSS/gene-start
+    ax.axvline(0, color='k', linestyle=':')
+    if 'TTS' in tick_labels:
+        ax.axvline(ticks[tick_labels.index('TTS')], color='k', linestyle=':')
+
+    ax.set_xlabel(feature_name)
+    ax.set_ylabel('Average enrichment (IP-input) RPMMR')
+
+    ax.legend(loc = 'upper center', bbox_to_anchor = (0.5, -0.1), ncol = len(arguments['fill_kwargs']), frameon = False)
+    
+    # Set ticks and labels on the average profile plot
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(tick_labels)
+    for txt, ha in zip(ax.get_xticklabels(), alignment):
+        txt.set_horizontalalignment(ha)
+
+    pp.savefig(fig)
+    plt.close(fig)
+# }}}
+
+def format_expression_axes(figure, expression, quantiles = None, e_type = "log(FPKM)", ticks = [-2000, 0, 500], tick_labels = ['-2Kb', 'TSS', '500bp'], alignment = ['right', 'center', 'right']):# {{{
     print "Formatting expression panel"
     # Axes limit tweaks
     figure.strip_axes.axis('tight')
@@ -86,9 +177,21 @@ def format_expression_axes(figure, expression, quantiles = None):# {{{
     figure.strip_axes.spines['left'].set_visible(False)
     figure.strip_axes.xaxis.set_ticks_position('bottom')
 
-    figure.strip_axes.set_xlabel('log(FPKM)')
+    figure.strip_axes.set_xlabel(e_type)
     figure.strip_axes.xaxis.set_major_locator(
-        matplotlib.ticker.MaxNLocator(nbins = 2, prune = None))
+        matplotlib.ticker.MaxNLocator(nbins = 5, prune = None))
+    
+    # Add a vertical line at TSS/gene-start
+    for ax in [figure.line_axes, figure.array_axes]:
+        ax.axvline(0, color='k', linestyle=':')
+        if 'TTS' in tick_labels:
+            ax.axvline(ticks[tick_labels.index('TTS')], color='k', linestyle=':')
+
+    # Set ticks and labels on the average profile plot
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(tick_labels)
+    for txt, ha in zip(ax.get_xticklabels(), alignment):
+        txt.set_horizontalalignment(ha)
 
     # Plot expression data in the right-most panel
     figure.strip_axes.fill_betweenx(
@@ -97,7 +200,7 @@ def format_expression_axes(figure, expression, quantiles = None):# {{{
             x2 = 0,
             color = '.5')
 
-    # If information about silent, Q1-Q4 genes is given add a subplot to the figure
+    # If information about silent, Q1-Q4 genes is given add a subplot to the figure# {{{
     if quantiles is not None:
         qlabel = {
                     0: 'silent',
@@ -132,258 +235,9 @@ def format_expression_axes(figure, expression, quantiles = None):# {{{
 #        bottom_ax.axvline(100, **border_style)
 #        bottom_ax.axvline(600, **border_style)
 #        bottom_ax.legend(loc='best', fontsize=8, frameon=False, labelspacing=0.4)
-#        bottom_ax.set_ylabel('Enrichment\n(RPMMR)')
+#        bottom_ax.set_ylabel('Enrichment\n(RPMMR)')# }}}
     
     return(figure)
-# }}}
-
-def format_axes(figure, name, by = None, order = None, expression = None, quantiles = None):# {{{
-    figure.line_axes.axis('tight')
-    for ax in [figure.line_axes, figure.array_axes]:
-        ax.axvline(0, color='k', linestyle='--')
-        
-    # Label axes
-    figure.array_axes.set_title(name)
-    figure.array_axes.set_ylabel("Genes")
-
-    figure.line_axes.set_ylabel("Average enrichment (IP - input)\n RPMMR")
-    figure.line_axes.set_xlabel("Metagenes ")
-
-    # Line at the TTS -- grey
-    figure.line_axes.axvline(0, color='k', linestyle=':')
-    figure.line_axes.axvline(100, color='c', linestyle=':')
-
-    figure.cax.set_ylabel("RPMMR")
-    
-    # Remove ticks from heatmap x axis
-    for tick in figure.array_axes.get_xticklabels():
-        tick.set_visible(False)
-
-    # Add average plot per subsets
-    if by is not None and order is not None:# {{{
-        print "In format_axes subsets"
-        metaseq.plotutils.add_labels_to_subsets(
-                figure.array_axes,
-                subset_by = by,
-                subset_order = order)
-        figure.line_axes.legend(loc ='best', frameon = False)
-    # }}}
-
-    if expression is not None:# {{{
-        print "Formatting expression panel"
-        # Axes limit tweaks
-        figure.strip_axes.axis('tight')
-        figure.strip_axes.axis(xmin = 0)
-
-        # Remove all edges but the bottom x-axis.
-        figure.strip_axes.yaxis.set_visible(False)
-        figure.strip_axes.spines['top'].set_visible(False)
-        figure.strip_axes.spines['right'].set_visible(False)
-        figure.strip_axes.spines['left'].set_visible(False)
-        figure.strip_axes.xaxis.set_ticks_position('bottom')
-
-        figure.strip_axes.set_xlabel('log(FPKM)')
-        figure.strip_axes.xaxis.set_major_locator(
-            matplotlib.ticker.MaxNLocator(nbins = 2, prune = None))
-
-        # Plot expression data in the right-most panel
-        figure.strip_axes.fill_betweenx(
-                x1 = sorted(expression),
-                y = np.arange(len(expression)),
-                x2 = 0,
-                color = '.5')
-
-        # If information about silent, Q1-Q4 genes is given add a subplot to the figure
-        if quantiles is not None:
-            qlabel = {
-                        0: 'silent',
-                        1: '0-25%', # Coming from rscript 1 is Q1, 2 is Q2 etc
-                        2: '25-50%',
-                        3: '50-75%',
-                        4: '75-100%'}
-            # Create linearly spaced colors along a colormap, but with some padding at
-            # the beginning to avoid too-light colors.
-            quantile_colors = matplotlib.cm.YlOrBr(np.linspace(.5, 1, 4 + 1))
-            uquantiles = sorted(list(set(quantiles)))
-            
-            # Create another axes along the bottom.
-            quantile_ax = plt.subplot(figure.gs[2, 0])
-            # Plot the quantile lines as different colors
-            for q, color in zip(uquantiles, quantile_colors)[::-1]:
-                ind = (quantiles == q).values
-                metaseq.plotutils.ci_plot(
-                        np.arange(700),
-                        narray[ind, :],
-                        ax = quantile_ax,
-                        line_kwargs = dict(color = color, label = qlabel[q], alpha = 0.5),
-                        fill_kwargs = dict(color = color, label = qlabel[q], alpha = 0.3)
-                    )
-            
-                # Axes configure on the bottom axes.
-            #    bottom_ax.set_xticks(ticks)
-            #    bottom_ax.set_xticklabels(ticklabels)
-            #    for txt, ha in zip(bottom_ax.get_xticklabels(), alignment):
-            #        txt.set_horizontalalignment(ha)
-            #    bottom_ax.axis('tight')
-            #    bottom_ax.axvline(100, **border_style)
-            #    bottom_ax.axvline(600, **border_style)
-            #    bottom_ax.legend(loc='best', fontsize=8, frameon=False, labelspacing=0.4)
-            #    bottom_ax.set_ylabel('Enrichment\n(RPMMR)')# }}}
-
-    figure.subplots_adjust(left = 0.2, right = 0.8, hspace = 0.05, top = 0.95)
-
-    # Positioning the colobar axes took some tweaking:
-    figure.cax.set_position([0.75, .15, .05, .10])
-    figure.set_facecolor('w')
-
-    return(figure)
-# }}}
-
-# Plotting metagene# {{{
-def plot_metagene(narray, features, label = None, subsets = None):
-    arguments = {
-            'vmin':5, 'vmax':95, 'percentile':True,
-            'figsize':(5, 8)
-            }
-
-    plt.rcParams['font.family'] = 'Sans'
-    plt.rcParams['font.size'] = 10
-
-    window = np.linspace(-5000, 0, int(int(5000)/10))
-    window = np.append(window, np.linspace(0,1000,1000))
-    window = np.append(window, np.linspace(1000,6000,int(int(5000)/10)))
-    arguments['x'] = window
-
-    pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '-profiles.pdf')
-
-    if subsets is not None:
-        assert type(subsets) is not 'metaseq.results_table.ResultsTable', \
-                'Subsets passed is not a table.'
-
-        assert len([i for i in ['groups', 'expression', 'order'] if i in list(subsets.columns.values)]) != 0, \
-                'Table does not contain any column that I know how to handle'
-
-        subsets_original_order = subsets.index
-        if len(features) != len(subsets): # {{{
-            tmp = [g.name for g in features if g.name not in subsets.index]
-            print "%s features in array are not present in subseting file. These will be presented as the UNK group when grouping or ignored when ordering heatmap." % len(tmp)
-            # If I do not write the feature_ids to variable and retrieve them on the fly in the tuple, it takes a long time
-            feature_ids = [g.name for g in features]
-            tmp = [x for x in subsets.index if x not in feature_ids]
-            print "%s features present in subseting file but not array. These will not be plotted." % len(tmp)
-            
-            # Filtering based on original order as reindexing in line 173 will result in all features in array been represented in subsets
-            array_indices_to_keep = [i for i, gene in enumerate(features) if gene.name in subsets_original_order]
-            narray_subset = narray[array_indices_to_keep]
-            features_subset = features.filter(lambda gene: gene.name in subsets.index).saveas()
-            subsets_set = subsets.reindex_to(features_subset, attribute = 'gene_id')
-            print "subsets %s subsets_set %s" % (len(subsets), len(subsets_set))
-            print "Should have this many %s features in array" % (len(subsets) - len(subsets_set))
-
-            # zip(a, b) combines two equal-length lists and meregs tehm together in pairs. e.g a = ['a', 'b'] and b = [1, 2] zip(a,b) = [('a',1), ('b',2)]
-            # will return True only for those indeces where the gene_id in both features and subset file are the same. If subsets is ordered as features 
-            # will return True for len(features) = len(subsets)
-            if len(features) != len([True for i,j in zip(subsets.index, [gene.name for gene in features]) if i==j]):
-                print "Features provided in subset file are not ordered as array. Re-indexing"
-                subsets = subsets.reindex_to(features, attribute = 'gene_id')
-                print "Subsets length after reindexing (line 183)"
-        # }}}
-
-        if 'groups' in list(subsets.columns.values) and False: # {{{
-            # Subsetting based on groups provided
-            print "plot_metagene(): subsetting based on groups provided"
-            # For getting the groups keep only those indeces that were in the original subset order, otherwise
-            # gene_ids in the array but not the subset file will produce nan. That makes it trickier to remove and fix
-            # downstream, expecially if I ever want a group to be named nan in the subsets file
-            groups = subsets.iloc[subsets.index.isin(subsets_original_order)].groups.unique()
-            cls = np.zeros(len(narray)).astype('str')
-            
-            # The numpy arrays for each group label will have the same length as 
-            # len(features) == len(subsets) and same order because before getting here subsets was reindexed
-            subset = []
-            for g in groups:
-                subset.append((g, (subsets.groups == g).values))
-            
-            if not all(subsets.index.isin(subsets_original_order)):
-                print "Features in the array are missing from the subsets file. group those together under the UNK group"
-                subset.append(('UNK group', ~(subsets.index.isin(subsets_original_order))))
-                groups = np.append(groups, 'UNK group')
-
-            subset = tuple(subset)
-            for lab, ind in subset:
-                cls[ind] = lab
-            # if group names are numbers then if 0 is a group asset will fail even if all features are assigned to a group
-            # Commenting this out until I can think of a better way to do it
-#            assert sum(cls == '0.0') == 0
-
-            arguments_subset  = arguments
-            # Saving groups and subsets to arguments for plotutils
-            arguments_subset['subset_by'] = cls
-            arguments_subset['subset_order'] = sorted(groups)
-
-            arguments_subset['line_kwargs'] = []
-            arguments_subset['fill_kwargs'] = []
-            colors = get_N_HexCol(len(groups))
-            
-            for i, g in enumerate(groups):
-                arguments_subset['line_kwargs'].append(dict(color=colors[i], label = g))
-                arguments_subset['fill_kwargs'].append(dict(color=colors[i], alpha = 0.3))
-            
-            arguments_subset['sort_by'] = narray.mean(axis=1)
-            fig_subset = metaseq.plotutils.imshow(narray, **arguments_subset)
-            fig_subset = format_axes(fig_subset, name = label, by = arguments_subset['subset_by'], order = arguments_subset['subset_order'])
-            pp.savefig(fig_subset)
-            plt.close(fig_subset)
-            pp.close()
-            return
-        # }}}
-        
-        if 'expression' in list(subsets.columns.values) and False:# {{{
-            print "Printing expression strip"
-            arguments_expression = arguments
-            arguments_expression['sort_by'] = narray.mean(axis=1)
-
-            # Params for the strip plot alongside the array
-            arguments_expression['subplot_params'] = dict(wspace=0.1, hspace=0.1, bottom=0.05)
-            arguments_expression['strip'] = True
-            arguments_expression['width_ratios'] = (4, 1)
-            arguments_expression['height_ratios'] = (4, 1, 1)
-            
-            fig_expression = metaseq.plotutils.imshow(narray, **arguments_expression)
-            #fig_expression = format_axes(fig_expression, name = label, expression = subsets.expression, quantiles = subsets.quartiles_valid)
-            fig_expression = format_axes(fig_expression, name = label, expression = subsets.expression)
-            pp.savefig(fig_expression)
-            plt.close(fig_expression)
-        # }}}
-        if 'order' in list(subsets.columns.values):
-            print "Order column provided...Subsetting and/or ordering"
-#            features_ids = [g.name for g in features]
-#            # Filtering based on original order as reindexing in line 173 will result in all features in array been represented in subsets
-#            array_indices_to_keep = [i for i, gene in enumerate(features) if gene.name in subsets_original_order]
-#            narray_subset = narray[array_indices_to_keep]
-#            features_subset = features.filter(lambda gene: gene.name in subsets.index).saveas()
-#            subsets_set = subsets.reindex_to(features_subset, attribute = 'gene_id')
-#            print "subsets %s subsets_set %s" % (len(subsets), len(subsets_set))
-#
-            arguments['line_kwargs'] = dict(color = 'k')
-            arguments['fill_kwargs'] = dict(color='k', alpha=0.4)
-            arguments['sort_by'] = subsets_set.order
-#            arguments['sort_by'] = narray_subset.mean(axis=1)
-            fig = metaseq.plotutils.imshow(narray_subset, **arguments)
-            fig = format_axes(fig, name = label)
-            pp.savefig(fig)
-            plt.close(fig)
-    else:
-        print "No csv file provided for subseting or ordering"
-        arguments['line_kwargs'] = dict(color = 'k')
-        arguments['fill_kwargs'] = dict(color='k', alpha=0.4)
-        fig = metaseq.plotutils.imshow(narray, features = features, **arguments)
-        fig = format_axes(fig, name = label)
-        pp.savefig(fig)
-        plt.close(fig)
-    # }}}
-
-    pp.close()
 # }}}
 
 # match_array_features: fset is a dataframe with indeces the gene_ids# {{{
@@ -406,7 +260,7 @@ def match_array_features(array, features, fset):
 # }}}
 
 # Plotting metagene# {{{
-def plot_metagene2(narray, features, label = None, fsets = None):
+def plot_metagene(narray, features, label = None, fsets = None):
 
     # Default params# {{{
     arguments = {
@@ -414,23 +268,40 @@ def plot_metagene2(narray, features, label = None, fsets = None):
             'figsize':(5, 8),
             'line_kwargs': dict(color = 'k'),
             'fill_kwargs': dict(color='k', alpha=0.4),
-            'fill_kwargs': dict(color='k', alpha=0.4),
-            'sort_by': narray.mean(axis=1)
+            # For metagenes filter based on max value on each row of the metagene array
+            # because genes with somewhat signal at the TSS might not be ordered after high signal
+            # TSSs if the gene body signal drives the average down
+            'sort_by': narray.max(axis=1)
             }
 
     plt.rcParams['font.family'] = 'Sans'
     plt.rcParams['font.size'] = 10
 
-    window = np.linspace(-5000, 0, int(int(5000)/10))
-    window = np.append(window, np.linspace(0,1000,1000))
-    window = np.append(window, np.linspace(1000,6000,int(int(5000)/10)))
-    arguments['x'] = window# }}}
+    # bins are 10bp long so to get the gene to look nice and long as many bins as we have I need to multiply the number
+    # of bins with 10
+    window = np.linspace(-5000, 0, 500)
+    window = np.append(window, np.linspace(0,10000,1000))
+    window = np.append(window, np.linspace(10000,15000,500))
+    arguments['x'] = window
 
-    pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '-profiles.pdf')
+    ticks, tick_labels, alignment = zip(*[
+        (-5000, '-5kb', 'right'),
+        (0, 'TSS', 'center'),
+        (2500, '', 'center'),
+        (5000, '50%', 'center'),
+        (7500, '', 'center'),
+        (10000, 'TTS', 'center'),
+        (15000, '5kb', 'left'),
+        ])
+
+    # }}}
+
+    from matplotlib.backends.backend_pdf import PdfPages
+    pp = PdfPages(plot_path + label + '-metagenes-profiles.pdf')
     
     print "Plotting without subsetting or reordering"
     fig = metaseq.plotutils.imshow(narray, features = features, **arguments)
-    fig = format_axes(fig, name = label + ' (' + str(narray.shape[0]) + ' features)')
+    fig = format_default_axes(fig, sample = label + ' (' + str(narray.shape[0]) + ' features)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
     pp.savefig(fig)
     plt.close(fig)
 
@@ -455,7 +326,7 @@ def plot_metagene2(narray, features, label = None, fsets = None):
             # Reindexing is done in match_array_features(), but if dimensions are the same it's done in else condition 
             # before continuing with any grouping etc
             fig = metaseq.plotutils.imshow(narray, features = features, **arguments)
-            fig = format_axes(fig, name = label + ' (' + str(narray.shape[0]) + ' features)')
+            fig = format_default_axes(fig, sample = label + ' (' + str(narray.shape[0]) + ' features)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
             pp.savefig(fig)
             plt.close(fig)
         else:
@@ -464,28 +335,28 @@ def plot_metagene2(narray, features, label = None, fsets = None):
 
         # }}}
 
+        if 'order' in list(fsets.columns.values):# {{{
+            print "Order column provided...Subsetting and/or ordering"
+            # http://nbviewer.jupyter.org/github/daler/metaseq/blob/master/doc/source/example_session.ipynb
+            # matplotlib.imshow with the argument `origin="lower"`, which means the row in the plot at y=0
+            # corresponds to the last row in the array (index=-1).
+            arguments['sort_by'] = fsets.order
+            o_fig = metaseq.plotutils.imshow(narray, **arguments)
+            o_fig = format_default_axes(o_fig, sample = label + ' (' + str(narray.shape[0]) + ' features - ordered)', feature_name = "Metagenes")
+            pp.savefig(o_fig)
+            plt.close(o_fig)
+            # }}}
+
         if 'groups' in list(fsets.columns.values): # {{{
             print "plot_metagene(): subsetting based on groups provided"
-            # For getting the groups keep only those indeces that were in the original subset order, otherwise
-            # gene_ids in the array but not the subset file will produce nan. That makes it trickier to remove and fix
-            # downstream, expecially if I ever want a group to be named nan in the fsets file
-            #groups = fsets.iloc[fsets.index.isin(fsets_original_order)].groups.unique()
             groups = fsets.groups.unique()
-            print 'Printing groups %s' % groups
             cls = np.zeros(len(narray)).astype('str')
-            print "cls length: %s fsets length: %s" % (len(cls), len(fsets))
             
             # The numpy arrays for each group label will have the same length as len(features) == len(fsets),
             # and same order because fsets was reindexed before.
             subset = []
             for g in groups:
                 subset.append((str(g), (fsets.groups == g).values))
-            
-            # Redundant as check done in match_array_features()
-#            if not all(fsets.index.isin(fsetorder)):
-#                print "Features in the array are missing from the fsets file. Group those together under the UNK group"
-#                subset.append(('UNK group', ~(fsets.index.isin(fset_order))))
-#                groups = np.append(groups, 'UNK group')
 
             for lab, ind in subset:
                 cls[ind] = str(lab)
@@ -501,23 +372,58 @@ def plot_metagene2(narray, features, label = None, fsets = None):
             s_arguments['fill_kwargs'] = []
             colors = get_N_HexCol(len(groups))
             
-            for i, g in enumerate(groups):
+            for i, g in enumerate(sorted(groups)):
                 s_arguments['line_kwargs'].append(dict(color=colors[i], label = g))
                 s_arguments['fill_kwargs'].append(dict(color=colors[i], alpha = 0.3))
             
             s_fig = metaseq.plotutils.imshow(narray, **s_arguments)
-            s_fig = format_axes(s_fig, name = label + ' (' + str(narray.shape[0]) + ' features)',
-                                by = s_arguments['subset_by'], order = s_arguments['subset_order'])
+            s_fig = format_default_axes(s_fig, sample = label + ' (' + str(narray.shape[0]) + ' features)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+            s_fig = format_subsets_axes(s_fig, by = s_arguments['subset_by'], order = s_arguments['subset_order'], ncols = len(arguments['fill_kwargs']))
+
             pp.savefig(s_fig)
             plt.close(s_fig)
-            pp.close()
+            
+            plot_subsets_separate(array= narray, arguments = s_arguments, pp = pp, sample = label + ' (' + str(narray.shape[0]) + ' features)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+
+            if 'order' in list(fsets.columns.values):
+            # ordering within the cluster is done from bottom to top of heatmap e.g
+            # e.g if ordering is the df on the left, on the heatmap from top to bottom will be
+            # a 1 classA    classB c
+            # b 2 classA    classB d
+            # c 3 classB    classA a
+            # d 4 classB    classA b
+                arguments['sort_by'] = fsets.order
+                
+                s_fig = metaseq.plotutils.imshow(narray, **s_arguments)
+                s_fig = format_default_axes(s_fig, sample = label + ' (' + str(narray.shape[0]) + ' features - ordered)', feature_name = "Metagenes")
+                s_fig = format_subsets_axes(s_fig, by = s_arguments['subset_by'], order = s_arguments['subset_order'], ncols = len(s_arguments['fill_kwargs']))
+                pp.savefig(s_fig)
+                plt.close(s_fig)
+        # }}}
+
+        if 'expression' in list(fsets.columns.values) and False:# {{{
+            print "Printing expression panel."
+            e_arguments = arguments
+            e_arguments['sort_by'] = narray.max(axis=1)
+
+            # Params for the strip plot alongside the array
+            e_arguments['subplot_params'] = dict(wspace=0.1, hspace=0.1, bottom=0.05)
+            e_arguments['strip'] = True
+            e_arguments['width_ratios'] = (4, 1)
+            e_arguments['height_ratios'] = (4, 1, 1)
+            
+            e_fig = metaseq.plotutils.imshow(narray, **e_arguments)
+            e_fig = format_default_axes(e_fig, sample = label + ' (' + str(narray.shape[0]) + ' features - ordered by expression)', feature_name = "Metagenes")
+            e_fig = format_expression_axes(e_fig, expression = fsets.expression, ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+            pp.savefig(e_fig)
+            plt.close(e_fig)
         # }}}
 
     pp.close()
     return {'narray': narray, 'features': features, 'fsets': fsets, 'fset_order':fset_order}
 # }}}
 
-def plot_array(array, features, pp, label = None):# {{{
+def plot_array(array, features, pp, label = None, fsets = None):# {{{
     arguments = {
             'vmin':5, 'vmax':95, 'percentile':True,
             'figsize':(5, 8),
@@ -559,43 +465,132 @@ def plot_array(array, features, pp, label = None):# {{{
 
     print "For checking how array %s should look before merging." % label
     fig = metaseq.plotutils.imshow(array, features = features, **arguments)
-    fig = format_default_axes(fig, sample = label, feature_name = label)
+    fig = format_default_axes(fig, sample = label, feature_name = label, ticks = ticks, tick_labels = tick_labels, alignment = alignment)
     pp.savefig(fig)
-    plt.close(fig)# }}}
-
-from matplotlib.backends.backend_pdf import PdfPages
-from collections import OrderedDict
-normalised_arrays = OrderedDict()
-
-for f in files:
-    npz = os.path.splitext(f)[0]
-    # Load the windows and arrays
-    from metaseq import persistence
-    # Only keeping the last BedTool object for features but since the order is the same in all 3 that is ok
-    features, arrays = persistence.load_features_and_arrays(prefix = npz)
-   
-    # Normalize IP to the control
-    normalised = arrays['ip'] - arrays['input']
-    normalised_arrays[os.path.basename(npz)] = normalised
+    plt.close(fig)
     
-from metaseq.results_table import ResultsTable
-# if I pass the gtf then attribute gene_id can not be found. weird but that's how it is. Should Potentially change all suffices to gff
-features = pybedtools.BedTool('/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.metaseq.genes.filtered.gtf')
-expression = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/inducible/results/report/expression_test_fake_fpkm2.tsv'
-#expression = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/inducible/results/report/ordered_subset.tsv'
-expression = ResultsTable(expression, import_kwargs=dict(index_col=0))
-print "Subset file len(features): %s len(annotation):  %s" % (len(expression), len(features))
-#expression = expression.reindex_to(features, attribute='gene_id')
-#print "After reindexing, len(features): %s len(annotation):  %s" % (len(expression), len(features))
+    if fsets is not None:
+        assert type(fsets) is not 'metaseq.results_table.ResultsTable', \
+                'fsets passed is not a table.'
 
-narray = np.concatenate((normalised_arrays['7E12_2i-Chd4_pooled_ddup.5000-gene_start'], normalised_arrays['7E12_2i-Chd4_pooled_ddup.genes-filtered'], normalised_arrays['7E12_2i-Chd4_pooled_ddup.gene_end-5000']), axis=1)
-label = os.path.splitext(normalised_arrays.keys()[0])[0]
-#plot_metagene(narray = narray, features = features, label = label, fsets = expression)
-test = plot_metagene2(narray = narray, features = features, label = label, fsets = expression)
+        assert len([i for i in ['groups', 'expression', 'order'] if i in list(fsets.columns.values)]) != 0, \
+                'Table does not contain any column that I know how to handle'
 
-#pp = PdfPages('/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/' + label + '_sep_array_test' + '-profiles.pdf')
-#plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.5000-gene_start'], features = features, pp = pp, label = '5000-gene_start')
-#plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.gene_end-5000'], features = features, pp = pp, label = 'gene_end-5000')
-#plot_array(array = normalised_arrays['7E12_2i-Chd4_pooled_ddup.genes-filtered'], features = features, pp = pp, label = 'genes-filtered')
-#pp.close()
+        # Making sure that fsets and array have the same dimensions# {{{
+        if len(features) != len(fsets):
+            print "From now on working with sub-setted array and features."
+            s_array_and_features = match_array_features(array = array, features = features, fset = fsets)
+            
+            array = s_array_and_features['s_array']
+            features = s_array_and_features['s_features']
+            fsets = s_array_and_features['s_fset']
+            fset_order = s_array_and_features['fset_order']
 
+            # There is no point in plotting the heatmap again if the array is not sub-setted.
+            # Reindexing is done in match_array_features(), but if dimensions are the same it's done in else condition 
+            # before continuing with any grouping etc
+            fig = metaseq.plotutils.imshow(array, features = features, **arguments)
+            fig = format_default_axes(fig, sample = label + ' (' + str(array.shape[0]) + ' features)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+            pp.savefig(fig)
+            plt.close(fig)
+        else:
+            print "Re-indexing fsets provided."
+            fsets = fsets.reindex_to(features, attribute = 'gene_id')
+
+        # }}}
+
+        if 'order' in list(fsets.columns.values) and False:# {{{
+            print "Order column provided...Subsetting and/or ordering"
+            arguments['sort_by'] = fsets.order
+            o_fig = metaseq.plotutils.imshow(array, **arguments)
+            o_fig = format_default_axes(o_fig, sample = label + ' (' + str(array.shape[0]) + ' features - ordered)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+            pp.savefig(o_fig)
+            plt.close(o_fig)
+            # }}}
+
+        if 'groups' in list(fsets.columns.values): # {{{
+            print "plot_metagene(): subsetting based on groups provided"
+            groups = fsets.groups.unique()
+            cls = np.zeros(len(array)).astype('str')
+            
+            # The numpy arrays for each group label will have the same length as len(features) == len(fsets),
+            # and same order because fsets was reindexed before.
+            subset = []
+            for g in groups:
+                subset.append((str(g), (fsets.groups == g).values))
+
+            for lab, ind in subset:
+                cls[ind] = str(lab)
+            # if group names are numbers then if 0 is a group asset will fail even if all features are assigned to a group
+            assert sum(cls == '0.0') == 0
+
+            s_arguments  = arguments
+            # Saving groups and fsets to arguments for plotutils
+            s_arguments['subset_by'] = cls
+            s_arguments['subset_order'] = map(str, sorted(groups))
+
+            s_arguments['line_kwargs'] = []
+            s_arguments['fill_kwargs'] = []
+            colors = get_N_HexCol(len(groups))
+            
+            for i, g in enumerate(groups):
+                s_arguments['line_kwargs'].append(dict(color=colors[i], label = g))
+                s_arguments['fill_kwargs'].append(dict(color=colors[i], alpha = 0.3))
+            
+            s_fig = metaseq.plotutils.imshow(array, **s_arguments)
+            s_fig = format_default_axes(s_fig, sample = label + ' (' + str(array.shape[0]) + ' features)', feature_name = "Metagenes")
+            s_fig = format_subsets_axes(s_fig, by = s_arguments['subset_by'], order = s_arguments['subset_order'], ncols = len(arguments['fill_kwargs']), ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+
+            pp.savefig(s_fig)
+            plt.close(s_fig)
+
+            plot_subsets_separate(array= array, arguments = s_arguments, pp = pp, sample = label + ' (' + str(narray.shape[0]) + ' features)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+
+            if 'order' in list(fsets.columns.values) and False:# {{{
+            # ordering within the cluster is done from bottom to top of heatmap e.g
+            # e.g if ordering is the df on the left, on the heatmap from top to bottom will be
+            # a 1 classA    classB c
+            # b 2 classA    classB d
+            # c 3 classB    classA a
+            # d 4 classB    classA b
+                arguments['sort_by'] = fsets.order
+                o_fig = metaseq.plotutils.imshow(array, **o_arguments)
+                o_fig = format_default_axes(o_fig, sample = label + ' (' + str(array.shape[0]) + ' features - ordered)', feature_name = "Metagenes", ticks = ticks, tick_labels = tick_labels, alignment = alignment)
+                o_fig = format_subseto_axes(o_fig, by = o_arguments['subset_by'], order = o_arguments['subset_order'])
+                pp.savefig(o_fig)
+                plt.close(o_fig)# }}}
+
+        return {'narray': array, 'features': features, 'fsets': fsets, 'fset_order':fset_order}
+        # }}}
+
+# }}}
+
+# For each bam calculate signal and plot it# {{{
+# The windows we'll get signal over
+def main():
+    normalised_arrays = OrderedDict()
+    # Create genomic_signal objects that point to data files
+    for f in files:
+        npz = os.path.splitext(f)[0]
+        # Load the windows and arrays
+        from metaseq import persistence
+        features, arrays = persistence.load_features_and_arrays(prefix = npz)
+       
+        # Normalize IP to the control
+        normalised = arrays['ip'] - arrays['input']
+        normalised_arrays[os.path.basename(npz)] = normalised
+    
+    narray = np.concatenate((normalised_arrays[normalised_arrays.keys()[0]], normalised_arrays[normalised_arrays.keys()[1]], normalised_arrays[normalised_arrays.keys()[2]]), axis=1)
+
+    from metaseq.results_table import ResultsTable
+    features = os.path.splitext(files[1])[0] + '.features'
+    features = pybedtools.BedTool(features)
+
+    fsets = args.subsets
+    fsets = ResultsTable(fsets, import_kwargs=dict(index_col=0))
+    label = os.path.splitext(normalised_arrays.keys()[0])[0]
+    test = plot_metagene(narray = narray, features = features, label = label, fsets = fsets)
+
+# }}}
+
+main()
