@@ -1,42 +1,64 @@
-library("DESeq")
+library("DESeq2")
+#library("DESeq")
 library("plyr")
 library("ggplot2")
+library("gplots")
+library("gridBase")
+library("gridExtra")
 
-### FUNCTIONS ###
+# purple, lime, dark red, pinkish, brown, mustard, hotpink, blue, green, grey,
+default_colors = c("#B25FCD", "#87CE4F", "#C05038",
+                   "#C6AEA9", "#494235", "#B99F47",
+                   "#A94777", "#6F7FB5", "#76C2A0",
+                   "#A2AFB9")
 
-#Get htseq-count files and create a data matrix
-make_matrix<-function(dir){
- 
- #Get the files-REMEMBER to fill in the paste arguments with the <samout> option set for htseq once you run it-DONE
- files<-list.files(path=dir, pattern= glob2rx(paste("*",".counts", sep="")), full.names=TRUE)
- #Save the names (cells and conditions) for the files-REMEMBER to fill it in-DONE
- #sub("pattern", "replacement", x)
- names<-gsub("\\..*", "", files)
- names<-gsub(".*/", "", names)
-
- #Read the files and create a list of tables
- counts_list<-lapply(files, read.table, row.names=1)
- #Initialize a matrix
- counts_matrix<- NULL
- #Iterate through the elements of the list (i.e. the tables)
-
- for(i in 1:length(counts_list)){
- #for(i in 1:length(counts_list)){
-  #Stop and produce an error message indicating the first of the elements of which were not true if not all tables have the same genes (rownames) 
-  stopifnot(all(rownames(counts_list[[i]])== rownames(counts_list[[1]])))
-  #make a matrix. Our table only has two columns, with the first one (V1) being NULL because contains the genes and the V2 containing the counts for each gene
-  counts_matrix<-cbind(counts_matrix, counts_list[[i]]$V2)
- }
- #Get the gene names
- rownames(counts_matrix)<-rownames(counts_list[[1]])
- colnames(counts_matrix)<-names
- 
- #Removing the last 5 lines of the HTSeq-Count output
- counts_matrix<-subset(counts_matrix, grepl("ENSMUSG", rownames(counts_matrix)))
- return(counts_matrix)
+# More elegant box plot.- should be moved to plotting functions and source that file
+boxplot = function (..., col) {
+    # Plot very narrow, minimal boxes.
+    pars = list(boxwex = 0.4, staplewex = 0,
+                medlwd = 1, whisklty = 1,
+                frame.plot = F, outpch = 20, outcex = 0.3)
+    if (! missing(col))
+        pars = c(pars, list(boxcol = col, whiskcol = col, outcol = col))
+    graphics::boxplot(..., pars = pars)
 }
 
-#Make a plotting function
+# Color scheme for divergent colors.
+divergent_colors = colorRampPalette(c('#603D71', 'white', '#A4B962'))(30)
+
+# Less intrusive defaults for heatmap.2.
+heatmap.2 = function (...)
+        gplots::heatmap.2(..., trace = 'none', density.info = 'none',
+                          col = divergent_colors, margins = c(8,8))
+
+### FUNCTIONS ###
+# create a master file with all counts from the counts directory# {{{
+export_counts = function(counts_path) {
+    if (file.exists(file.path(counts_path, 'experiment-counts.tsv'))) {
+        #check.names=FALSE ensures that no X is put in front of colnames starting with a number
+        counts = read.table(file.path(counts_path, 'experiment-counts.tsv'), row.names = 1, header = T, sep = "\t", check.names = FALSE)
+    } else {
+        counts_files = list.files(counts_path, pattern = "\\.counts$", full.name = T)
+        counts_per_sample <- mclapply(counts_files, read.delim, row.names = 1, header = F)
+        names(counts_per_sample) = basename(file_path_sans_ext(counts_files))
+        
+        # Ensure that all files have the same identifiers before merging
+        check = unlist(lapply(2:length(counts_per_sample)-1, function(i){
+                              s=i+1
+                              unlist(lapply(s:length(counts_per_sample), function(j) {
+                                            check = identical(rownames(counts_per_sample[[i]]), rownames(counts_per_sample[[j]]))
+                                            names(check) = paste0(names(counts_per_sample[i]), ':', names(counts_per_sample[j]))
+                                            return(check) })) }))
+        if (any(check == FALSE)) {print(check); stop('Count files do not contain the same order and number feature IDs. Please inspect the files and rerun.')}
+        
+        counts = do.call(cbind.data.frame, counts_per_sample)
+        names(counts) = basename(file_path_sans_ext(counts_files))
+        write.table(counts, file.path(counts_path, 'experiment-counts.tsv'), row.names = T, col.names = T, quote = F, sep = "\t")
+    }
+    return(counts)
+}# }}}
+
+#Make a plotting function# {{{
 plotDE<-function(res, fdr){
  df<-data.frame(res, FDR=ifelse(res$padj<fdr, paste("<", fdr, sep=" "), paste(">", fdr, sep=" ")))
 
@@ -44,8 +66,9 @@ plotDE<-function(res, fdr){
  p<-p + geom_point(aes(colour=FDR))
  print (p)
 }
+# }}}
 
-#Make a plotting function for introns--take into account exon de analysis
+#Make a plotting function for introns--take into account exon de analysis# {{{
 plotDEnIntron<-function(res, fdr){
  df<-data.frame(res, FDR=ifelse(res$padj<fdr, paste("<", fdr, sep=" "), paste(">", fdr, sep=" ")))
 
@@ -53,8 +76,9 @@ plotDEnIntron<-function(res, fdr){
  p<-p + geom_point(aes(colour=FDR, size=FDR, shape=DEexon), size=2)
  print (p)
 }
+# }}}
 
-#Run DESeq and compare 2 conditions
+#Run DESeq and compare 2 conditions# {{{
 NbinomTest <- function(cds, cond1, cond2, geneNames, exonDE=NULL) {
  #Run the negative binomial test on the CountDataSet(cds with estimatedDispersions) for the 2 conditions
  res <- nbinomTest( cds, cond1, cond2 )
@@ -109,4 +133,46 @@ NbinomTest <- function(cds, cond1, cond2, geneNames, exonDE=NULL) {
  
  #Write output for all genes with gene name instead of id
  write.table(allgenes, file=paste(cond1,"vs",cond2,".txt",sep=""), sep="\t", quote=FALSE, row.names=FALSE)
+}# }}}
+
+
+
+# Plotting function specific to plotting counts# {{{
+# contrast needs to be a character vector of the contrasts used in cds
+plot_counts = function(counts, contrast, color = default_colors){
+    if(missing(color)){
+        color = default_colors
+        # If color not passed in the call will use the default colors
+        unique_contrast = unique(contrast)
+        color = color[1:length(unique_contrast)]
+        names(color) = unique_contrast
+    }
+
+    layout(matrix(c(1, 2), nrow = 1), widths = c(0.5, 0.5))
+    op = par(mar = c(5.1, 5.1, 4.1, 1), oma = c(0, 0, 0, 0))
+    
+    # Use global minimum value > 0 as pseudocount.
+    eps = min(counts[counts > 0])
+    boxplot(counts + eps, las = 2, frame.plot = F, log = 'y', col = color[contrast])
+
+    correlated = cor(counts, method = 'spearman')
+    pcs = prcomp(correlated)
+    explained_variance = summary(pcs)$importance['Proportion of Variance', ]
+    plot(PC2 ~ PC1, pcs$x,
+         col = color[contrast], pch = 16,
+         xlab = sprintf('PC1 (%.0f%% variance)', explained_variance[1] * 100),
+         ylab = sprintf('PC2 (%.0f%% variance)', explained_variance[2] * 100))
+    legend('topright', bty = 'n', legend = names(color[unique_contrast]), fill = color)
+    text(pcs$x[,1], pcs$x[,2], labels = gsub(".*\\.", '', names(pcs$x[,1])), cex = 0.7, pos = 3)
+
+    par(op)
+
+    margin = c(5,5)
+    heatmap.2(correlated, ColSideColors = color[contrast])
+    
+    # Reset par to defaults
+    par(mfrow=c(1,1))
+    par(mar = c(5, 4, 4, 2) + 0.1)
 }
+# }}}
+
