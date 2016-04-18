@@ -260,6 +260,7 @@ get_features = function(archive = NULL, organism = NULL, output = NULL){ # {{{
    
     export.gff3(intergenic, paste0(output, ".rtracklayer-intergenic", ".gtf"))
     export.gff3(canonical_transcripts_gr, paste0(output, ".rtracklayer-canonical-transcripts", ".gtf"))
+    export.gff3(transcripts_gr, paste0(output, ".rtracklayer-transcripts", ".gtf"))
 }
 
 # }}}
@@ -276,30 +277,6 @@ main = function(){# {{{
                         separate(V2, c('year', 'version'), sep = 'v') %>% 
                         mutate(archive = paste0(tolower(month), year,".archive.ensembl.org")) %>%
                         distinct(version)
-
-    # Might not be needed at the end# {{{
-    assemblies = read_html(args$etable) %>% html_nodes('td') %>% html_text()
-    html_tables = read_html(args$etable) %>% html_nodes('table') %>% html_table()
-    html_tables = lapply(html_tables, function(x){
-                         colnames(x) = gsub("^\\W+$", "Organism", colnames(x))
-                         x = x[!grepl("^\\W+$", x[,'Organism'], perl=T),]
-                         return(x)
-                    })
-
-    assemblies = html_tables[[1]]
-    for(i in 2:length(html_tables)){
-        assemblies = left_join(assemblies, html_tables[[i]], by = "Organism")
-    }
-    assemblies = apply(assemblies, 1, function(per_row){
-                       for(j in 2:length(per_row)){
-                           if(is.na(per_row[j])) per_row[j] = per_row[j-1]
-                       }
-                       return(per_row)
-                    })
-    options(stringsAsFactors = T)
-    assemblies = as.data.frame(t(assemblies))
-    colnames(assemblies) = gsub(".+v", "v", colnames(assemblies))
-    # }}}
 
     # Build host name e.g for ensembl70 host='jan2013.archive.ensembl.org', ds= 'mmusculus_gene_ensembl'
     gtf_name = basename(args$gtf)
