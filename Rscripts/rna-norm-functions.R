@@ -81,9 +81,9 @@ compute.FPKMS=function(counts, length){# {{{
     return(list(matrix = fpkm, total = total))
 }# }}}
 
-#z' Compute FPKMs from raw counts# {{{
+#' Compute FPKMs from raw counts# {{{
 #' @param counts can be a vector/matrix/dataframe
-#' @param effective_length is a vector of length length(counts) or nrow(counts)
+#' @param effective_length is a named vector of length length(counts) or nrow(counts)
 counts_to_FPKM = function(counts, effective_length){
     library(dplyr)
 
@@ -91,13 +91,13 @@ counts_to_FPKM = function(counts, effective_length){
         # If not the same order or not of the same length this will return a string 
         # with the number of mismatches
         if(all.equal(names(counts), names(effective_length)) != TRUE)
-           stop('Counts and effective lengths are not calculated on the same features')
+           stop('Named vector provided. Counts and effective lengths are not calculated on the same features.')
 
         N = sum(counts)
         exp( log(counts) + log(1e9) - log(effective_length) - log(N) )
     } else {
         if(all.equal(rownames(counts), names(effective_length)) != TRUE)
-           stop('Counts and effective lengths are not calculated on the same features')
+           stop('Matrix/Dataframe provided. Counts and effective lengths are not calculated on the same features')
 
         fpkms = as.data.frame(counts) %>%
                 mutate_each(funs(exp( log(.) + log(1e9) - log(effective_length) - log(sum(.)) )))
@@ -107,7 +107,14 @@ counts_to_FPKM = function(counts, effective_length){
 }#}}}
 
 FPKM_to_TPM = function(fpkm){
-    exp(log(fpkm) - log(sum(fpkm)) + log(1e6))
+    if (is.null(dim(counts))){
+        exp(log(fpkm) - log(sum(fpkm)) + log(1e6))
+    } else {
+        tpm = as.data.frame(fpkm) %>% 
+                mutate_each(funs(exp(log(.) - log(sum(.)) + log(1e6))))
+        rownames(tpm) = rownames(fpkm)
+        tpm
+    }
 }
 
 counts_to_EffCounts = function(counts, len, effective_length){
