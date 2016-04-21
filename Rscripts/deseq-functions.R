@@ -1,16 +1,18 @@
 library("DESeq2")
-#library("DESeq")
 library("plyr")
 library("ggplot2")
 library("gplots")
 library("gridBase")
 library("gridExtra")
+library("RColorBrewer")
+library("reshape")
 
-# purple, lime, dark red, pinkish, brown, mustard, hotpink, blue, green, grey,
-default_colors = c("#B25FCD", "#87CE4F", "#C05038",
-                   "#C6AEA9", "#494235", "#B99F47",
-                   "#A94777", "#6F7FB5", "#76C2A0",
-                   "#A2AFB9")
+# green, hotpink, lime, purple, light pinkish, dark red, mustard, brown, grey, blue
+default_colors = c("#76C2A0","#A94777",
+                   "#87CE4F", "#B25FCD",
+                   "#C6AEA9", "#C05038",
+                   "#B99F47", "#494235",
+                   "#A2AFB9", "#6F7FB5")
 
 # More elegant box plot.- should be moved to plotting functions and source that file
 boxplot = function (..., col) {
@@ -24,12 +26,13 @@ boxplot = function (..., col) {
 }
 
 # Color scheme for divergent colors.
-divergent_colors = colorRampPalette(c('#603D71', 'white', '#A4B962'))(30)
+divergent_colors = colorRampPalette(c('#603D71', 'white', '#A4B962'))(50)
+divergent_warm_colors = colorRampPalette(rev(brewer.pal(9,"RdBu")))(50)
 
 # Less intrusive defaults for heatmap.2.
 heatmap.2 = function (...)
         gplots::heatmap.2(..., trace = 'none', density.info = 'none',
-                          col = divergent_colors, margins = c(8,8))
+                          col = divergent_colors, margins = c(12,12))
 
 ### FUNCTIONS ###
 # create a master file with all counts from the counts directory# {{{
@@ -56,6 +59,249 @@ export_counts = function(counts_path) {
         write.table(counts, file.path(counts_path, 'experiment-counts.tsv'), row.names = T, col.names = T, quote = F, sep = "\t")
     }
     return(counts)
+}# }}}
+
+# Used in plot_counts() to resetmar and mfrow# {{{
+reset_par = function(){
+    # Reset par to defaults in the parent environment
+    eval(quote(par(mfrow = c(1,1))), parent.frame())
+    eval(quote(par(oma = c(0,0,0,0))), parent.frame())
+    eval(quote(par(mar = c(5, 4, 4, 2) + 0.1)), parent.frame())
+}# }}}
+
+# plot counts # {{{
+plot_counts = function(eset, counts, design,
+                        # colors should be a named vector
+                       contrast = "Contrast", colors,
+                       scaled = T, type = NULL, rld){
+
+    library(gtools)
+    # If missing create eset from counts# {{{
+    if(missing(eset)){
+        library(EDASeq)
+        print('Building eset object from counts...')
+        contrasts = design[match(colnames(counts), as.character(design$Library)), contrast]
+        unique_contrast = unique(contrasts)
+        contrasts = factor(contrasts, levels = unique_contrast)
+        eset = newSeqExpressionSet(as.matrix(counts),
+                                   phenoData = data.frame(contrasts, row.names = colnames(counts)))
+    } else {
+        tmp = DESeq2::counts(eset)
+        tmp = colnames(tmp)
+        # contrasts is used in plotRLE for the colors
+        contrasts = design[match(tmp, as.character(design$Library)), contrast]
+        unique_contrast = unique(contrasts)
+        contrasts = factor(contrasts, levels = unique_contrast)
+    } # }}}
+
+    # Set colours if missing# {{{
+    # If color not passed in the call will use the default colors
+    if(missing(colors)){
+        colors = default_colors
+        colors = colors[1:length(unique_contrast)]
+        names(colors) = unique_contrast
+    }# }}}
+
+    format_RLE = function(){# {{{
+        # Plot very narrow, minimal boxes.
+        pars = list(boxwex = 0.4, staplewex = 0,
+                    medlwd = 1, whisklty = 1,
+                    bty = "n", outpch = 20, outcex = 0.3,
+                    # handle colors
+                    boxcol = colors[contrasts], whiskcol = colors[contrasts], outcol = colors[contrasts])
+        plotRLE(eset, outline = FALSE, ylim =c(-0.5, 0.5), col = colors[contrasts],
+                las = 2, cex = 0.7, pars = pars, frame.plot = F)
+        title(main = type, ylab = "Relative Log Expression")
+        legend('topright', bty = "n", legend = names(colors[unique_contrast]), fill = colors[unique_contrast])
+    }# }}}
+   
+    format_cntbox = function(){# {{{
+        # Use global minimum value > 0 as pseudocount.
+        eps = min(counts[counts > 0])
+        boxplot(counts + eps, las = 2, frame.plot = F, log = 'y', col = colors[contrasts])
+        title(main = type, ylab = "Counts")
+    }# }}}
+
+    format_rld_pca = function(){# {{{
+        library(ggplot2)
+
+        theme = theme_set(theme_bw())
+        theme = theme_update(legend.position = "bottom",
+                             panel.border = element_blank(),
+                             axis.line.x = element_line(),
+                             axis.line.y = element_line(),
+                             panel.grid.major.x = element_blank())
+
+        keep_groups = as.data.frame(colData(rld)) %>% select(-c(Library, File, sizeFactor)) %>% colnames()
+        (data = DESeq2::plotPCA(rld, intgroup = keep_groups, returnData=TRUE))
+        variance = round(100 * attr(data, "percentVar"))
+        p = ggplot(data, aes(PC1, PC2, color = mixedsort(get(contrast)))) + geom_point(size = 3)
+        p = p + scale_color_manual(values = colors)
+        p = p + labs(x = paste0("PC1: ", variance[1],"% variance"), 
+                     y = paste0("PC2: ", variance[2],"% variance"),
+                     title = "PCA on rlog(counts)",
+                     color = contrast)
+        print(p)
+    }# }}}
+
+    # Calculates disctance from rld object by default otherwise calculates and plots correlation# {{{# {{{
+    format_dheatmap = function(mat, corr = FALSE) {
+        library(pheatmap)
+        if(corr){
+            distance_matrix = cor(counts, method = 'spearman')
+            distances = as.dist(distance_matrix)
+            label = "(Spearman correlation)"
+
+            #design is inherited by parent function
+            annotation = design %>% select(-c(Library, File))
+            rownames(annotation) = colnames(design[['Library']])
+        } else{
+            distances = dist(t(assay(mat)))
+            distance_matrix = as.matrix(distances)
+            label = "(rlog - distance)"
+            annotation = as.data.frame(colData(mat)) %>% select(-c(Library, File, sizeFactor))
+            divergent_colors = rev(divergent_colors)
+            
+#            library(PoiClaClu)
+#            poison_distances = PoissonDistance(t(counts))
+#            distance_matrix = as.matrix(poison_distances$dd)
+
+        }# }}}
+        
+        if(any(!sapply(annotation, is.numeric))){
+            annotation = annotation %>% mutate_each_(funs(factor),
+                                                    names(which(!sapply(annotation, is.numeric))))
+        }
+
+        anno_colors = list(colors)
+        names(anno_colors) = contrast
+        annotation = annotation[,contrast, drop=F]
+        # Reverting colours so that smallest distance matches the 1 in correlation heatmap
+        pheatmap(distance_matrix,
+                 clustering_distance_rows = distances,
+                 clustering_distance_cols = distances,
+                 col = divergent_colors,
+                 border_col = NA,
+                 annotation_col = annotation,
+                 annotation_colors = anno_colors,
+                 main = paste("Sample-to-sample distance", label))
+        reset_par()
+    }# }}}
+
+    layout(matrix(c(1, 2), nrow = 1), widths = c(0.5, 0.5))
+    format_cntbox()
+    format_RLE()
+
+    # Creating all library combinations
+    if(!missing(rld)){
+        print('Rlog transformed data provided...')
+        format_rld_pca()
+        reset_par()
+        format_dheatmap(rld)
+    } else {
+        format_dheatmap(counts, corr = TRUE)
+        
+    }
+    reset_par()
+    return()
+} 
+# }}}
+
+# plot_fpkm()# {{{
+# results is the full results table from DESeq, markers should have a column called ensembl_gene_id
+# contrast should be a named vector where values are contrast e.g. wt/ko and names are library names
+# markers should have a column called state
+plot_fpkm = function(fpkms, markers, first_contrast = NULL, second_contrast = NULL, results = NULL, label = "TPM"){
+    library(reshape2)
+    source("~/source/Rscripts/ggplot-functions.R")
+
+    get_basic_p = function(f_subset, f_contrast=NULL, s_contrast = NULL, default_colors, results = NULL){# {{{
+
+        # format f_subset# {{{
+        if(! is.null(f_contrast) & ! is.null(s_contrast)) {
+            print("Two contrasts provided. The first one will be used to colour groups and the second one to make in facets.")
+            f_subset = f_subset %>% mutate(First_contrast = variable) %>%
+                mutate(First_contrast = ifelse(First_contrast %in% names(f_contrast),
+                                               f_contrast[First_contrast], First_contrast)) %>%
+                mutate(Second_contrast = variable) %>%
+                mutate(Second_contrast = ifelse(Second_contrast %in% names(s_contrast), 
+                                                s_contrast[Second_contrast], Second_contrast))
+        } else if(! is.null(f_contrast)) {
+            f_subset = f_subset %>% mutate(First_contrast = variable) %>%
+                mutate(First_contrast = ifelse(First_contrast %in% names(f_contrast),
+                                               f_contrast[First_contrast], First_contrast))
+        } # }}}
+        
+        # If no contrast provided only plotting based on state which is set as grid
+        gg = "#A2AFB9"
+        if(any(!is.null(f_contrast), !is.null(s_contrast))){
+
+            if(!is.null(results)){
+                p = ggplot(f_subset, aes(x = external_gene_id, y = value, color = First_contrast, shape = FDR))
+                p = p + scale_shape_manual(values = setNames(c(19, 1), c('< 0.05', '>= 0.05')))
+            } else{
+                p = ggplot(f_subset, aes(x = external_gene_id, y = value, color = First_contrast))
+            }
+            # http://stackoverflow.com/questions/34734218/geom-errorbar-no-stat-called-stathline
+            p = p + stat_summary(fun.y = mean, aes(ymin =..y.., ymax =..y.., color = First_contrast),
+                                 geom = 'errorbar', width = 0.3, size = 1)
+            # if first contrast is wt/ko then set the colours to default colors used in plot counts
+            if(all(sort(levels(as.factor(f_contrast))) == c("ko", "wt"))) gg = setNames(default_colors[1:2], c("wt", "ko"))
+            
+            if(!is.null(second_contrast)) {
+                p = p + facet_wrap(Second_contrast ~ state)
+            } else {
+                p = p + facet_grid(~state)
+            }
+        } else {
+            if(!is.null(results)){
+                p = ggplot(f_subset, aes(x = external_gene_id, y = value, shape = FDR))
+                p = p + scale_shape_manual(values = setNames(c(19, 1), c('< 0.05', '>= 0.05')))
+            } else{
+                p = ggplot(f_subset, aes(x = external_gene_id, y = value))
+            }
+            p = p + facet_grid(~state)
+        }
+        p = p + geom_point(size = 2) + scale_color_manual(values = gg)
+        
+        txt_angle = 20
+        if(f_subset %>% select(Gene) %>% unique() %>% .[[1]] %>% length() > 12) txt_angle = 90
+
+        p = p + theme_bw() + theme(strip.text.x = element_text(size = 11, colour = "black"),
+                                   axis.text.x = element_text(angle = txt_angle, size = 11)) 
+        p = p + xlab('') + ylab(label)
+        return(p)
+
+    }# }}}
+
+    markers = markers %>% dplyr::rename(Gene = ensembl_gene_id)
+    fpkms_subset = fpkms %>% inner_join(markers, by = "Gene")
+    if(!is.null(results)){
+        fpkms_subset = fpkms_subset %>% inner_join(results %>% select(Gene, padj), by = "Gene")
+        fpkms_subset = fpkms_subset %>% mutate(FDR = ifelse(padj < 0.05, '< 0.05', '>= 0.05')) %>% select(-padj)
+        fpkms_subset = melt(fpkms_subset, id = c("Gene", "external_gene_id", "state", "FDR"))
+    } else {
+        fpkms_subset = melt(fpkms_subset, id = c("Gene", "external_gene_id", "state"))
+    }
+    # Not doing log transformation with ggplot because I do not get the axis to look like I want it to despite:
+    # http://stackoverflow.com/questions/11214012/set-only-lower-bound-of-a-limit-for-ggplot
+    # p = p + scale_y_continuous(trans = "log10",  name = label, limits = c(1, NA), breaks = scales::pretty_breaks())
+    fpkms_subset = fpkms_subset %>% mutate(value = log10(value))
+    label = paste0("log10(", label, ")")
+
+    # If groups are too big then split the dataframe and plot separately
+    if(nrow(markers) > 10){
+        fpkms_list = split(fpkms_subset, fpkms_subset$state)
+        lapply(fpkms_list, function(f_subset){
+                   print(get_basic_p(f_subset = f_subset, f_contrast = first_contrast,
+                                     s_contrast = second_contrast, default_colors = default_colors, results = results))
+                                   })
+    } else {
+        lapply(fpkms_list, function(f_subset){
+                   print(get_basic_p(f_subset = f_subset, f_contrast = first_contrast,
+                                  s_contrast = second_contrast, default_colors = default_colors, results = results))})
+    }
+
 }# }}}
 
 #Make a plotting function# {{{
@@ -134,45 +380,4 @@ NbinomTest <- function(cds, cond1, cond2, geneNames, exonDE=NULL) {
  #Write output for all genes with gene name instead of id
  write.table(allgenes, file=paste(cond1,"vs",cond2,".txt",sep=""), sep="\t", quote=FALSE, row.names=FALSE)
 }# }}}
-
-
-
-# Plotting function specific to plotting counts# {{{
-# contrast needs to be a character vector of the contrasts used in cds
-plot_counts = function(counts, contrast, color = default_colors){
-    if(missing(color)){
-        color = default_colors
-        # If color not passed in the call will use the default colors
-        unique_contrast = unique(contrast)
-        color = color[1:length(unique_contrast)]
-        names(color) = unique_contrast
-    }
-
-    layout(matrix(c(1, 2), nrow = 1), widths = c(0.5, 0.5))
-    op = par(mar = c(5.1, 5.1, 4.1, 1), oma = c(0, 0, 0, 0))
-    
-    # Use global minimum value > 0 as pseudocount.
-    eps = min(counts[counts > 0])
-    boxplot(counts + eps, las = 2, frame.plot = F, log = 'y', col = color[contrast])
-
-    correlated = cor(counts, method = 'spearman')
-    pcs = prcomp(correlated)
-    explained_variance = summary(pcs)$importance['Proportion of Variance', ]
-    plot(PC2 ~ PC1, pcs$x,
-         col = color[contrast], pch = 16,
-         xlab = sprintf('PC1 (%.0f%% variance)', explained_variance[1] * 100),
-         ylab = sprintf('PC2 (%.0f%% variance)', explained_variance[2] * 100))
-    legend('topright', bty = 'n', legend = names(color[unique_contrast]), fill = color)
-    text(pcs$x[,1], pcs$x[,2], labels = gsub(".*\\.", '', names(pcs$x[,1])), cex = 0.7, pos = 3)
-
-    par(op)
-
-    margin = c(5,5)
-    heatmap.2(correlated, ColSideColors = color[contrast])
-    
-    # Reset par to defaults
-    par(mfrow=c(1,1))
-    par(mar = c(5, 4, 4, 2) + 0.1)
-}
-# }}}
 
