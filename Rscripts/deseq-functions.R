@@ -13,6 +13,11 @@ default_colors = c("#76C2A0","#A94777",
                    "#C6AEA9", "#C05038",
                    "#B99F47", "#494235",
                    "#A2AFB9", "#6F7FB5")
+names(default_colors) = c('green', 'hotpink',
+                           'lime', 'purple',
+                           'lightpinkish', 'darkred',
+                           'mustard', 'brown',
+                           'grey','blue')
 
 # More elegant box plot.- should be moved to plotting functions and source that file
 boxplot = function (..., col) {
@@ -249,7 +254,7 @@ plot_fpkm = function(fpkms, markers, first_contrast = NULL, second_contrast = NU
             if(all(sort(levels(as.factor(f_contrast))) == c("ko", "wt"))) gg = setNames(default_colors[1:2], c("wt", "ko"))
             
             if(!is.null(second_contrast)) {
-                p = p + facet_wrap(Second_contrast ~ state)
+                p = p + facet_grid(Second_contrast ~ state)
             } else {
                 p = p + facet_grid(~state)
             }
@@ -279,9 +284,9 @@ plot_fpkm = function(fpkms, markers, first_contrast = NULL, second_contrast = NU
     if(!is.null(results)){
         fpkms_subset = fpkms_subset %>% inner_join(results %>% select(Gene, padj), by = "Gene")
         fpkms_subset = fpkms_subset %>% mutate(FDR = ifelse(padj < 0.05, '< 0.05', '>= 0.05')) %>% select(-padj)
-        fpkms_subset = melt(fpkms_subset, id = c("Gene", "external_gene_id", "state", "FDR"))
+        fpkms_subset = reshape2::melt(fpkms_subset, id = c("Gene", "external_gene_id", "state", "FDR"))
     } else {
-        fpkms_subset = melt(fpkms_subset, id = c("Gene", "external_gene_id", "state"))
+        fpkms_subset = reshape2::melt(fpkms_subset, id = c("Gene", "external_gene_id", "state"))
     }
     # Not doing log transformation with ggplot because I do not get the axis to look like I want it to despite:
     # http://stackoverflow.com/questions/11214012/set-only-lower-bound-of-a-limit-for-ggplot
@@ -302,6 +307,38 @@ plot_fpkm = function(fpkms, markers, first_contrast = NULL, second_contrast = NU
                                   s_contrast = second_contrast, default_colors = default_colors, results = results))})
     }
 
+}# }}}
+
+# Plotting density# {{{
+plot_density = function(deseq_res, subsets = NULL, subset_name = NULL, label = "NULL", significance = 0.05){
+    # for genes that are not expressed basemean =0 and show no change in
+    # expression set log2FoldChange to 0 as it is NA and causes problems
+    if(! 'Gene' %in% colnames(deseq_res)){
+        deseq_res = add_rownames(as.data.frame(deseq_res), var = "Gene")
+    }
+    # Keeping only the genes that are expressed in at least one condition so baseMean won't be 0
+    deseq_res = deseq_res %>% filter(!is.na(log2FoldChange)) %>%
+                mutate(padj = ifelse(is.na(padj), 1, padj))
+
+    p = ggplot(data = deseq_res, aes(x = log2FoldChange))
+    p = p + geom_line(stat = "density", aes(color = padj < significance))
+    # Manually setting the xlim to -4 and +4
+    p = p + coord_cartesian(xlim = c(-4.5, 4.5)) + scale_color_manual(values = unname(default_colors[c('blue', 'darkred')]))
+    p = p + theme_bw() + theme(legend.position= "bottom") + labs(color = paste0('padj < ', significance)) + ggtitle(label)
+    plot(p)
+    
+    # density = counts / sum(counts * bar width)
+    if (!is.null(subsets)){
+        deseq_res = deseq_res %>% mutate(Subset = Gene %in% subsets)
+        q = ggplot(data = deseq_res, aes(x = log2FoldChange))
+        q = q + geom_line(stat = "density", aes(color = padj < significance, linetype = Subset)) + labs(linetype = subset_name)
+        # Manually setting the xlim to -4 and +4
+        q = q + coord_cartesian(xlim = c(-4.5, 4.5)) + scale_color_manual(values = unname(default_colors[c('blue', 'darkred')]))
+        q = q + theme_bw() + theme(legend.position= "bottom") + labs(color = paste0('padj < ', significance)) + ggtitle(label)
+        
+        plot(q)
+    }
+    
 }# }}}
 
 #Make a plotting function# {{{
