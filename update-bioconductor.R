@@ -1,6 +1,8 @@
-bioc-updates <- function(url){
+bioc_updates = function(url, inst_pkgs){
+    # e.g. "http://www.bioconductor.org/packages/release/bioc/"
     bioc= available.packages(contrib.url(url))
-    inst-pkgs= installed.packages()
-    common-pkgs= intersect(rownames(bioc), rownames(inst-pkgs))
-    mapply(function(x, y) compareVersion(x, y), inst-pkgs[common-pkgs, "Version"], bioc[common-pkgs, "Version"])
+    common_pkgs= intersect(rownames(bioc), rownames(inst_pkgs))
+    status = mapply(function(x, y) compareVersion(x, y), inst_pkgs[common_pkgs, "Version"], bioc[common_pkgs, "Version"])
+    status = status[status < 0]
+    return(status)
 }
