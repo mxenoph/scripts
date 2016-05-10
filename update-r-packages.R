@@ -16,7 +16,7 @@ pkgs = pkgs[!rownames(pkgs) %in% names(bioc_pkgs)]
 for (i in 1:nrow(pkgs))
 {
     pkg_name = pkgs[i, 1]
-    pkg_version = pkgs[i, 3]
+    pkg_version = pkgs[i, 'Built']
     if (pkg_version != r_version)
     {
         #print(paste('Installing', pkg_name))
@@ -24,7 +24,7 @@ for (i in 1:nrow(pkgs))
             print('Installing colorout')
             devtools::install_github("jalvesaq/colorout")
         } else if (pkg_name == 'modules'){
-            print('Installing colorout')
+            print('Installing modules')
             devtools::install_github('klmr/modules')
         } else{
             install.packages(pkg_name)
