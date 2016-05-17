@@ -14,7 +14,7 @@ parser$add_argument('-a', '--assembly', type= "character", default='mm10', help=
 parser$add_argument('-d', '--de', metavar = "path", type= "character", default='', help= "Path to look for the list of de expressed genes")
 parser$add_argument('-o', '--out', metavar= "path", type= "character", default= getwd(), help= "Output directory -- all subdirectories will be created here")
 parser$add_argument('-g', '--gtf', metavar= "file", type= "character",
-                    default = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.75.gtf",
+                    default = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf",
                     help= "GTF file. Looks for the rtracklayer generated gtfs for that annotation. If not found it runs get-annotation-rscript.R")
 parser$add_argument('-e', '--active_enhancers', metavar= "file", type= "character",
                     default = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-active_2015-08-10.bed",
@@ -25,8 +25,20 @@ parser$add_argument('-p', '--poised_enhancers', metavar= "file", type= "characte
 
 args = parser$parse_args()
 
+# For testing interactively# {{{
+if(FALSE){
+    args = list()
+    args$sheet = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/config/TF-incl-steady-all-inducible-sites.config"
+    args$assembly = "mm10"
+    args$de = ''
+    args$out = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/"
+    args$gtf = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf"
+    args$active_enhancers = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-active_2015-08-10.bed"
+    args$poised_enhancers = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-poised_2015-08-10.bed"
+}# }}}
+
 label = file_path_sans_ext(basename(args$sheet))
-output_path = file.path(args$out, 'DiffBind', label)
+output_path = file.path(args$out, 'DiffBind', paste0(label, '_test'))
 plot_path = file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 #}}}
@@ -53,7 +65,6 @@ heatmap.2 = function (...)
                               col = heat_cols)
 pheatmap = function (...)
             pheatmap::pheatmap(..., trace = 'none', density.info = 'none',
-                               #color = divergent_colors, border_color = NA,
                                color = heat_cols, border_color = NA,
                                fontsize = 10, fontsize_row = 6,
                                show_colnames = TRUE)
@@ -62,7 +73,45 @@ add_rownames = function(df, var = 'rowname') {
     rowname_df = setNames(data_frame(rownames(df)), var)
     cbind(rowname_df, df)
 }
+
+default_colors = c("#76C2A0","#A94777",
+                    "#87CE4F", "#B25FCD",
+                    "#C6AEA9", "#C05038",
+                    "#B99F47", "#494235",
+                    "#A2AFB9", "#6F7FB5")
+names(default_colors) = c('green', 'hotpink',
+                        'lime', 'purple',
+                        'lightpinkish', 'darkred',
+                        'mustard', 'brown',
+                        'grey','blue')
+
+# Tweaking the ggplot theme
+theme = theme_set(theme_bw())
+theme = theme_update(legend.position = "bottom",
+                     panel.border = element_blank(),
+                     axis.line.x = element_line(),
+                     axis.line.y = element_line(),
+                     panel.grid.major.x = element_blank())
+
+# helper function to plot in preview.pdf when debugging# {{{
+preview = function(f) {
+    pdf('~/public_html/preview.pdf')
+    eval(f)
+    dev.off()
+}# }}}
 ## Functions
+
+# Return a list with indexes of times in minutes and the respective values in h# {{{
+convert_time = function(x) {
+    index = grepl('m', x)
+    values = x[index]
+    # R introduces X in front of the string if starting with number
+    values = gsub("^X", '', values)
+    values = as.numeric(gsub("m", '', values))
+    values = gsub("^", "h", as.character(values / 60))
+    return(list(index = index, values = values))
+}
+# }}}
 
 # Read in and format data# {{{
 import_data = function(cnf_df){
@@ -90,15 +139,56 @@ import_data = function(cnf_df){
 # }}}
 
 # Differential Binding Analysis: doing all the work # {{{
-differential_binding = function (cnf, protein){
+differential_binding = function (cnf, protein, cpalette = default_colors){
+    
+    # Invoking DiffBind invisible functions to get the PCs and plot custom PCA {{{
+    custom_PCA = function(counts, cnf, cpalette = cpalette){
+        # mask is TRUE for all samples to get the PCA for all
+        counts_pv = DiffBind:::pv.pcmask(counts, nrow(counts), mask = rep(T, ncol(counts$class)), sites = NULL, cor = F, bLog = T)
+        # http://stats.stackexchange.com/questions/143905/loadings-vs-eigenvectors-in-pca-when-to-use-one-or-another
+        #TODO: check whether using the loadings is correct here or not
+        pc_loadings = as.data.frame(counts_pv$pc$loadings[,1:2])
+        pc_loadings = pc_loadings %>% add_rownames(var = 'SampleID') %>%
+            left_join(cnf, by = 'SampleID') %>% select(matches("Comp"), Condition, Replicate, SampleID)
+        pc_loadings[['Condition']] = factor(pc_loadings[['Condition']], levels = mixedsort(unique(pc_loadings[['Condition']])))
+        pc_loadings = pc_loadings %>% arrange(Condition)
+
+        vr = rep(0, length(counts_pv$pc$sdev))
+        for (i in 1:length(vr)) {
+            vr[i] = counts_pv$pc$sdev[i]^2
+        }
+        c1p = vr[1]/sum(vr) * 100
+        c2p = vr[2]/sum(vr) * 100
+
+        p = ggplot(pc_loadings, aes(Comp.1, Comp.2, color = Condition)) + geom_point(size = 3)
+        if(is.character(cpalette)){
+            # string is also vector that's why this condition needs to be tested first
+            p = p + scale_colour_brewer(palette = cpalette)
+        } else if(is.vector(cpalette)){
+            # not checking if cpalette is NULL or anything as ggplot will just use default colors in that case
+            p = p + scale_color_manual(values = cpalette)
+        }
+        p = p + labs(x = sprintf("PC%d: %2.0f%% variance", 1, c1p),
+                     y = sprintf("PC%d: %2.0f%% variance", 2, c2p),
+                     title = "PCA (all sites)",
+                     color = 'Condition')
+        print(p)
+    }# }}}
+
     tmp = import_data(cnf)
     config = tmp[['cnf_df']]
     peakset = tmp[['peakset']]
+    dba.plotHeatmap = function(...) 
+            DiffBind::dba.plotHeatmap(..., colScheme = rev(divergent_colors),
+                                      colSideCols = default_colors)
+
+    # test this when not running interactive as it can't find X11
+    #par(family = 'serif')
 
     # Using only this peak caller data, a correlation heatmap can be generated 
     # which gives an initial clustering of the samples
     pdf(file.path(plot_path, paste0(protein, '.pdf')))
-    # if only using one peak file then dba.plotHeatmap will throw error for soem reason
+    # if only using one peak file then dba.plotHeatmap will throw error for some reason# {{{
     # as correlations will all be 1
     if (length(levels(factor(cnf[['Peaks']]))) > 1 ) {
         # For this plot clustering is based on peak scores. Peaks identified somewhere
@@ -107,9 +197,16 @@ differential_binding = function (cnf, protein){
         dba.plotHeatmap(peakset, main = 'Correlation on peak scores (from peak caller)')
         # Adding consensus peaks for all conditions-proteins that are the same and only
         # differ in terms of replicates
+        # Only include peaks in at least this percentage of total number of peak sets
         peakset = dba.peakset(peakset, consensus = -DBA_REPLICATE, minOverlap = 0.5)
         dba.count = function (...)
             DiffBind::dba.count(..., minOverlap = 0.5)
+
+        ov_rate = dba.overlap(peakset, mode=DBA_OLAP_RATE)
+        # If this curve drops off too quickly (worse than geometric), that indicates that there
+        # is little agreement between the peaksets called for each sample
+        p = ggplot(data.frame(common = ov_rate, sets = 1:length(ov_rate)), aes(y=common, x=sets)) + geom_point(shape=19) + geom_line()
+        p + xlab('# peaksets') + xlab("# common peaks") + ggtitle(protein) + theme_bw()
     } else {
         x = unique(cnf[['Peaks']])
         if (file_ext(x) == 'narrowPeak') {
@@ -117,35 +214,90 @@ differential_binding = function (cnf, protein){
         } else if (file_ext(x) == 'broadPeak') {
             peaks_gr = import_broadPeak(x)
         }
-        peakset = dba.peakset(peakset, consensus = -DBA_REPLICATE, minOverlap = 1)
+        peakset = dba.peakset(peakset, consensus = -DBA_REPLICATE, minOverlap = 0)
         dba.count = function (...)
             DiffBind::dba.count(..., minOverlap = 0)
-    }
-
-    ov_rate = dba.overlap(peakset, mode=DBA_OLAP_RATE)
-    # If this curve drops off too quickly (worse than geometric), that indicates that there
-    # is little agreement between the peaksets called for each sample
-    p = ggplot(data.frame(common = ov_rate, sets = 1:length(ov_rate)), aes(y=common, x=sets)) + geom_point(shape=19) + geom_line()
-    p + xlab('# peaksets') + xlab("# common peaks") + ggtitle(protein) + theme_classic()
+    }# }}}
 
     # https://support.bioconductor.org/p/63466/
     # DBA_SCORE_TMM_READS_EFFECTIVE normalizes to the number of reads actually overlapping peaks 
     # (should only be used if you expect most of the peaks to have similar binding levels)
     # DBA_SCORE_TMM_READS_FULL, which will normalize to the overall depth of sequencing in each library
     counts = dba.count(peakset, score = DBA_SCORE_TMM_MINUS_FULL,
-                       # only include peaks in at least this many peaksets
-#                       minOverlap = 2,
-#                       peaks = peakset$masks$Consensus,
                        # Assuming bam file is ddup
-                       # bRemoveDuplicates = TRUE,
+                       bRemoveDuplicates = TRUE,
                        bScaleControl = TRUE, bParallel = TRUE,
                        bCorPlot = FALSE)
+    # e.g counts$peaks[[1]] has colnames = chr, start, end, score, RPKM, Readsm cRPKM, cReads
+    # RPKM here is reads/ (peak width/1000) / library size / 1e6
+    # anything with cReads and cRPKM are for control
+
+    FRiP = as.data.frame(t(data.frame(FRiP = as.numeric(counts$SN),
+                                      row.names = counts$samples$SampleID))) %>% add_rownames(var = "Var1")
+    exp_metadata = reshape2::melt(counts$class) %>% filter(Var1 %in% c('ID', 'Condition', 'Reads', 'Replicate', 'bamRead', 'bamControl'))
+    exp_metadata = reshape2:::dcast(exp_metadata, Var1 ~ Var2)
+    exp_metadata = rbind(exp_metadata, FRiP) %>% rename(Attribute = Var1)
+    write.table(t(exp_metadata), file.path(output_path, paste0(protein, '-metadata.tsv')), sep ='\t',
+                row.names = F, col.names = F, quote = F)
+
+    get_db_manually = function(){# {{{
+        x_counts = dba.count(peakset, score = DBA_SCORE_READS,
+                             bScaleControl = TRUE, bParallel = TRUE,
+                             bCorPlot = FALSE)
+        x_contrast = dba.contrast(x_counts, categories = DBA_CONDITION, minMembers = 2)
+        x_diff_bound = dba.analyze(x_contrast, method = DBA_DESEQ2,
+                                 # indicating control reads are subtracted
+                                 bSubControl= TRUE,
+                                 # full library size used for normalization, effective library size
+                                 # normalization is preferred if binding levels are expected to be similar
+                                 # between samples
+                                 bFullLibrarySize = FALSE,
+                                 bTagwise = TRUE,
+                                 bParallel = TRUE,
+                                 bCorPlot = FALSE)
+
+        bindingMatrix = dba.peakset(x_counts, bRetrieve=T, DataType = DBA_DATA_FRAME)
+        bindingMatrix = bindingMatrix %>% unite(ID, CHR, START, END, sep = "_")
+        rownames(bindingMatrix) = bindingMatrix[['ID']]
+        bindingMatrix = bindingMatrix[,-1]
+        coldata = data.frame(condition = c(rep('h0', 3), rep('h1',3), rep('h4', 3)))
+        rownames(coldata) = colnames(bindingMatrix)
+        bds = DESeqDataSetFromMatrix(countData = bindingMatrix, colData = coldata, design = ~condition)
+        bds = estimateSizeFactors(bds)
+
+        bds1 = DESeqDataSetFromMatrix(countData = bindingMatrix[,1:6], colData = coldata[1:6,,drop=F], design = ~condition)
+        sizeFactors(bds1) = x_diff_bound$contrasts[[1]]$DESeq2$facs
+        bds1 = estimateDispersions(bds1, fitType= 'local')
+        bds1 = nbinomWaldTest(bds1)
+        
+        x_diff_bound$contrasts[[1]]$DESeq2$facs
+
+    }# }}}
+
+    print('Plotting correlation of read counts over peaks...')
     dba.plotHeatmap(counts, main = 'Correlation on peak read count score')
-    dba.plotHeatmap(counts, main = 'Correlation on peak read count score', correlations=F)
+    
+    # From here on printing counts so change color scheme to heat_cols
+    dba.plotHeatmap = function(...) 
+            DiffBind::dba.plotHeatmap(..., colScheme = heat_cols,
+                                      colSideCols = default_colors)
+    # bLog = T by default when plotting read counts
+    dba.plotHeatmap(counts, main = paste0(protein, ' (log2 normalised)'), bLog = T, correlations=F, Colv = F)
+    dba.plotHeatmap(counts, main = paste0(protein, ' (log2 normalised)'), bLog = T, correlations = F, Colv = T)
+    print('Plotting PCA for all sites...')
+    # sites = logical vector indicating which sites to include in PCA. Use this for plotting PCS for
+    # global binding matrix for sites db in any condition
+    dba.plotPCA(counts, attributes = DBA_CONDITION, score = DBA_SCORE_TMM_MINUS_FULL,
+                        label = DBA_REPLICATE, bLog = TRUE, vColors = default_colors, cor = TRUE)
+
+    custom_PCA(counts, cnf, cpalette = default_colors)
     dev.off()
 
+    print('Setting up contrast')
+    # minMembers = minimum number of unique samples in group, must be at least 2
     contrast = dba.contrast(counts, categories = DBA_CONDITION, minMembers = 2)
     
+    print('Calling DB sites.')
     diff_bound = dba.analyze(contrast, method = DBA_DESEQ2,
                              # indicating control reads are subtracted
                              bSubControl= TRUE,
@@ -157,11 +309,23 @@ differential_binding = function (cnf, protein){
                              bParallel = TRUE,
                              bCorPlot = FALSE)
 
+    # the last level of the Contrast variable will be used over the first level 
+    # e.g if levels(design$Contrast)
+    # [1] wt wt ko ko
+    # Levels: ko wt
+    # FC = log2(wt/ko) and positive FC corresponds to downregulation in the ko while positive corresponds to upregulation in the ko
+    # This is counter-intuitive but not sure how DiffBind sets the contrasts to force order.
+    # TODO: make sure to always write files as denominator-nominator.diffbind.tsv so you know what comparison has been made
+    # and write function that checks the FC sign and the conc between conditions
+
+    # Get results for independent comparisons# {{{
     for (index in 1:length(contrast$contrasts)){
+#    for (index in 1:1){
         comparison = paste(protein,
                            paste(contrast$contrasts[[index]]$name1,
                                  contrast$contrasts[[index]]$name2, sep='-'),
                            sep = '_')
+        print(paste0('Retrieving results for comparison ', comparison))
         
         # write report with all sites irrespective if differentially bound or not
         results =  dba.report(diff_bound, method = DBA_DESEQ2,
@@ -173,12 +337,16 @@ differential_binding = function (cnf, protein){
                               # Threshold will be FDR and not pval
                               bUsePval = FALSE,
                               th = 1)
+
+        print('Writing results to file...')
         write.table(as.data.frame(results),
                     file = file.path(output_path,
                                      paste0(comparison, '.tsv')), sep="\t", quote=FALSE, row.names=FALSE)
         
         results =  dba.report(diff_bound, method = DBA_DESEQ2,
                               contrast = index,
+#                              contrast = c(1,2),
+                              DataType = DBA_DATA_FRAME,
                               # add count data for individual samples
                               bCounts = TRUE,
                               # only include sites with an absolute Fold value greater than equal
@@ -186,9 +354,11 @@ differential_binding = function (cnf, protein){
                               # Threshold will be FDR and not pval
                               bUsePval = FALSE,
                               th = 0.05)
-        
-        # So that the function doesn't crush for cases where no db detected 
+
+        res = DiffBind:::pv.DBAreport(diff_bound, contrast = 1, method = "DESeq2", bUsePval = F, th = 100, bNormalized = T)
+        # So that the function doesn't crush for cases where no db detected # {{{
         if( length(results) != 0 ) {
+            print(paste0('Found significant differential binding for comparison ', comparison))
         
             write.table(as.data.frame(results),
                         file = file.path(output_path,
@@ -209,39 +379,43 @@ differential_binding = function (cnf, protein){
                             contrast = index,
                             # Threshold will be FDR and not pval
                             bUsePval = FALSE,
-                            score = DBA_SCORE_TMM_MINUS_FULL,
-                            th = 0.05)
+                            # only used when plotting the global binding matrix (no contrast specified)
+                            # score = DBA_SCORE_TMM_MINUS_FULL,
+                            th = 0.05, 
+                            main = paste0("Correlations on read counts for DB sites in ", comparison))
 
             dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
-                            contrast = index,
+                            # plot maximum 2000 sites instead of default 1000
+                            contrast = index, maxSites = 2000,
                             # Threshold will be FDR and not pval
                             bUsePval = FALSE,
-                            score = DBA_SCORE_TMM_MINUS_FULL,
-                            correlations=FALSE,
-                            th = 0.05)
+                            correlations = FALSE,
+                            th = 0.05,
+                            main = sprintf("%d dDB sites in %s", 2000, comparison))
 
             dba.plotHeatmap(diff_bound, method = DBA_DESEQ2,
+                            # mask indicating a subset of peaksets to use when using global
+                            # binding matrix scores. If a contrast is specified, include peaksets
+                            # for only the db in contrast
                             contrast = index, mask = diff_bound$masks$All,
-                            # Threshold will be FDR and not pval
                             bUsePval = FALSE,
                             score = DBA_SCORE_TMM_MINUS_FULL,
                             correlations=FALSE,
                             th = 0.05)
             dev.off()
-        }
-    }
-}
-# }}}
+        }# }}}
+    }# }}}
+
+} # }}}
 
 aggregate_counts = function(fs){ # {{{
     first = TRUE
     for (x in 1:length(fs)) {
         tmp = read.delim(fs[x], head = T, sep = "\t", stringsAsFactors = F)
-
         rename_map = c(paste("FC", names(fs)[x], sep = "."),
                        paste("FDR", names(fs)[x], sep = "."))
         combine_by = c('seqnames', 'strand', 'start', 'end')
-        tmp = tmp %>% dplyr::select(seqnames:end, strand, Fold, FDR:ncol(.)) %>%
+        tmp = tmp %>% select(seqnames, start, end, strand, Fold, FDR, starts_with("Conc")) %>%
               rename_(.dots = setNames(list("Fold", "FDR"), rename_map))
 
         if(first) {# {{{
@@ -262,12 +436,11 @@ aggregate_counts = function(fs){ # {{{
 }
 # }}}
 
-# Prepare a data.frame containing counts/TMM for multiple conditions/samples for plotting# {{{
-# ca is the name for column annotation
-format_cdf = function(cdf, statistic = "FDR", ca = "Time", threshold = 0.05){
+# Plotting Conc log2(mean(counts)) across condition replicates # {{{
+format_cdf = function(cdf, contains_times = FALSE, threshold = 0.05){
     source("~/source/Rscripts/ggplot-functions.R")
     # Significant changes between any samples in the cdf
-    significant = dplyr::select(cdf, contains(statistic)) %>% apply(1, function(x) min(x[!is.na(x)]) < threshold)
+    significant = dplyr::select(cdf, contains("FDR")) %>% apply(1, function(x) min(x[!is.na(x)]) < threshold)
 
     if(any(significant)) {
         plot_data = cdf[significant,]
@@ -275,63 +448,51 @@ format_cdf = function(cdf, statistic = "FDR", ca = "Time", threshold = 0.05){
         row_names = plot_data[['rowname']]
         
         # Row annotation needs to be defined before selecting columns
-        row_annotation = dplyr::select(plot_data, contains(statistic)) %>%
-                         mutate_each(funs(ifelse(. > 0.05 | is.na(.), 'non significant', 'significant')))
+        row_annotation = dplyr::select(plot_data, contains("FDR")) %>%
+                         mutate_each(funs(ifelse(. > threshold | is.na(.),
+                                                 paste0('FDR >= ', threshold),
+                                                 paste0('FDR < ', threshold))))
         row_annotation = row_annotation %>% dplyr::select(one_of(rev(mixedsort(colnames(row_annotation)))))
         rownames(row_annotation) = row_names
 
-        plot_data = plot_data %>% dplyr::select(-starts_with('FC'),
-                                                -starts_with(statistic),
-                                                -seqnames, -strand, -start, -end,
-                                                -rowname)
+        plot_data = plot_data %>% dplyr::select(starts_with('Conc_'))
 
         # Formatting time in row_annotation and plot_data and consequenctly column_annotation and ac# {{{
-        if(ca == "Time") {
-            convert_time = function(x) {
-                index = grepl('m', x)
-                values = x[index]
-                # R introduces X in front of the string if starting with number
-                values = gsub("^X", '', values)
-                values = as.numeric(gsub("m", '', values))
-                values = gsub("^", "h", as.character(values / 60))
-                return(list(index = index, values = values))
-            }
-            timepoints = data.frame(x =  gsub("^.*\\.", "", colnames(row_annotation))) %>%
-                            tidyr::separate(x, into = c("timepoint1", "timepoint2"), sep = '-')
-            x = convert_time(timepoints[['timepoint1']])
-            timepoints[['timepoint1']][x$index] = x$values
+        comparisons = data.frame(x = unlist(lapply(regmatches(colnames(row_annotation),
+                                                             gregexpr("^FDR\\.+", colnames(row_annotation)), invert=T),
+                                                  function(x) x[2]))) %>%
+                        tidyr::separate(x, into = c("comparison1", "comparison2"), sep = '-')
+        colnames(row_annotation) = (comparisons %>% tidyr::unite(x, comparison1, comparison2, sep = "-") %>% .[[1]])
 
-            x = convert_time(timepoints[['timepoint2']])
-            timepoints[['timepoint2']][x$index] = x$values
-            colnames(row_annotation) = (timepoints %>% tidyr::unite(x, timepoint1, timepoint2, sep = "-") %>% .[[1]])
-
-            timepoints = data.frame(x = colnames(plot_data)) %>% tidyr::separate(x, into = c("timepoint", "factor", "rep"), sep="_")
-            x = convert_time(timepoints[['timepoint']])
-            timepoints[['timepoint']][x$index] = x$values
-            colnames(plot_data) = (timepoints %>% tidyr::unite(x, timepoint, factor, rep, sep = "_") %>% .[[1]])
-        }# }}}
+        conditions = data.frame(x = colnames(plot_data)) %>% tidyr::separate(x, into = c('tmp', "Condition"), sep="_")
+        colnames(plot_data) = conditions[['Condition']]
+        # }}}
         
         # Reordering row_annotation columns so that all comparison involving zero show up first on heatmap
         row_annotation = row_annotation %>% select(one_of(mixedsort(names(.))))
-        plot_data = plot_data %>% dplyr::select(match(mixedsort(colnames(plot_data)), colnames(plot_data)))
+        color = c('slategrey', 'violetred')
+        anno_colors = lapply(1:ncol(row_annotation), function(x) setNames(color, c(paste0('FDR >= ', threshold),
+                                                                                   paste0('FDR < ', threshold))))
+        names(anno_colors) = colnames(row_annotation)
 
+        plot_data = plot_data %>% dplyr::select(match(mixedsort(colnames(plot_data)), colnames(plot_data)))
         plot_data = as.matrix(plot_data)
         rownames(plot_data) = row_names
 
         # Column names should be sample_rep with no '_' in "sample"
-        column_annotation = data.frame( x = gsub("_.*", '', colnames(plot_data)))
-        colnames(column_annotation) = ca
+        column_annotation = data.frame( x = gsub(".*_", '', colnames(plot_data)))
+        if(contains_times){
+            colnames(column_annotation) = "Time"
+            color = setNames(colorRampPalette(brewer.pal(9,'PuBuGn'))(nrow(column_annotation)),
+                              column_annotation[[1]])
+            anno_colors[["Time"]] = cool_colors
+        } else{
+            colnames(column_annotation) = "Condition"
+            color = setNames(default_colors[nrow(column_annotation)],
+                              column_annotation[[1]])
+            anno_colors[["Time"]] = cool_colors
+        }
         rownames(column_annotation) = colnames(plot_data)
-
-        color = c('slategrey', 'violetred')
-        anno_colors = lapply(1:ncol(row_annotation), function(x) c("non significant" = color[1],
-                                                                   "significant" = color[2]))
-        names(anno_colors) = colnames(row_annotation)
-
-        cool_colors = colorRampPalette(brewer.pal(9,"YlGnBu"))(8)
-        tmp = cool_colors[1:length(unique(column_annotation[[ca]]))]
-        names(tmp) = mixedsort(as.character(unique(column_annotation[[ca]])))
-        anno_colors[[ca]] = tmp
 
         return(list(plot_data = plot_data,
                     ra = row_annotation, ca = column_annotation,
@@ -617,20 +778,29 @@ per_db_region = function(db_regions, deseq_results, pattern = 'Expression'){
 
 # main # {{{
 main = function () {
-    setwd("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013")
-    args = list()
-    args$sheet = "mm10/config/TF-steady-state-diff-bind.config"
+#    options(error=traceback)
 
     cnf_df = read.table(args$sheet, header=T, stringsAsFactors=F)
+    contains_times = any(gregexpr("h[[:digit:]]+", cnf$Condition, ignore.case = T) != -1) | any(gregexpr("[[:digit:]]+h", cnf$Condition, ignore.case = T) != -1) | any(gregexpr("[[:digit:]]+m", cnf$Condition, ignore.case = T) != -1)
+    if(contains_times){
+        tmp = convert_time(cnf_df$Condition)
+        cnf_df[tmp$index, 'Condition'] = tmp$values
+    }
+
     proteins = levels(as.factor(cnf_df[['Factor']]))
 
-    for (p in proteins[2]) {
+    for (p in proteins) {
         print(p)
-        cnf = cnf_df %>% filter(Factor %in% c(p, keep))
-        differential_binding(cnf, p)
+        cnf = cnf_df %>% filter(Factor %in% c(p))
+        if(contains_times){
+            differential_binding(cnf, p, cpalette = 'PuBuGn')
+        } else {
+            differential_binding(cnf, p)
+        }
     }
 
     comparisons = list.files(pattern = "[^db].tsv", path = output_path, full.name = T)
+    comparisons = comparisons[gregexpr(".*_.*-", basename(comparisons)) != -1]
     # Keeping only the comparisons of the time points. If design is different this won't work
     comparisons = comparisons[grep('!', comparisons, invert = T)]
     comparisons = as.data.frame(comparisons)
@@ -660,18 +830,19 @@ main = function () {
     } else {
         command = paste("Rscript ~/source/get-annotation-rscript.R -G", args$gtf, '-p', ncores, collapse = " ")
         stop(paste('Annotation GTFs do not exist. Run `', command, '` first.', collapse = ' '))
+        
     }# }}}
 
     # Heatmap for histone mods across time points# {{{
     for (p in proteins){
+        print(paste0('Plotting heatmap for ', p))
         fs = comparisons %>% dplyr::select(comparisons) %>% 
                 filter(grepl(p, comparisons)) %>%
                 unique() %>% .[[1]] %>% as.character()
-                
+
         names(fs) = mutate(comparisons, label = paste(c1, c2, sep= "-")) %>%
                         filter(grepl(p, comparisons)) %>%
                         dplyr::select(label) %>% .[[1]] %>% as.character()
-
 
         bdf_cnt = aggregate_counts(fs) %>% mutate(rowname = paste(seqnames, start, end, sep = "_"))
         # format_cdf returns error if no db regions so use tryCatch to save that
@@ -710,14 +881,15 @@ main = function () {
         bins = c(0, 0.5, 1, 5, 10, 50, 100, 300)
         for (i in 1:length(bins)) {
             if(i == length(bins)) {
-                x = y >= bins[i]
+                x = bdf$ra$d_relative_to_gene >= bins[i]
                 tmp[x] = paste0(bins[i], 'kb+')
             } else {
-                x = y >= bins[i] & y < bins[i+1]
+                x = bdf$ra$d_relative_to_gene >= bins[i] & bdf$ra$d_relative_to_gene < bins[i+1]
                 tmp[x] = paste0(bins[i], '-', bins[i+1], 'kb')
             }
         }
-        bdf$ra$d_relative_to_gene = tmp# }}}
+        bdf$ra$d_relative_to_gene = tmp 
+        # }}}
 
         continuous_colors = colorRampPalette(brewer.pal(9,"RdYlGn"))(length(unique(tmp)))
         bdf$ac$d_relative_to_gene = continuous_colors
@@ -730,12 +902,15 @@ main = function () {
         bdf$ac$overlapping_feature = colorRampPalette(brewer.pal(9,"Paired"))(length(ordering))
         names(bdf$ac$overlapping_feature) = ordering
         
-        png(file.path(plot_path, paste0('differential_binding-', p, '.png')), height = 700, width = 700)
+        pdf(file.path(plot_path, paste0('differential_binding-', p, '.pdf')), height = 700, width = 700)
+        print(head(bdf$plot_data))
+        print(class(as.data.frame((bdf$plot_data))))
 
-        results = pheatmap(bdf$plot_data,
+        results = pheatmap(as.data.frame(bdf$plot_data),
                            clustering_distance_rows = "correlation",
                            clustering_method = "ward.D2", scale = 'row',
-                           cluster_cols = FALSE, cluster_rows = TRUE,
+#                           cluster_cols = FALSE, cluster_rows = TRUE,
+                           cluster_cols = FALSE, cluster_rows = FALSE,
                            annotation_row = bdf$ra, annotation_col = bdf$ca,
                            annotation_legend = T, annotation_colors = bdf$ac,
                            show_rownames = FALSE, 
@@ -780,6 +955,8 @@ main = function () {
     }# }}}
 
 }
+
+main()
 
 # }}}
 
