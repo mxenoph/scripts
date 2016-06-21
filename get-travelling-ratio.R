@@ -290,6 +290,16 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
     }# }}}
 
     test_significance = function(df, combination){# {{{
+        # unlike the t-statistic, the value of the D statistic (and hence the P value) 
+        # is not affected by scale changes like using log. The KS-test is a robust test that 
+        # cares only about the relative distribution of the data.
+        # Unequal dataset size is not a problem for the KS-test.
+        # distribution of the test statistic is based on the assumption that the distributions are continuous 
+        # => ties are impossible. When there are ties the distribution is affected in such a way that depends on the 
+        # pattern of ties and approximations of the p-values are reported instead. p-value is HEAVILY affected when 
+        # large number of ties
+        # If so, then that will affect the results, the assumption is that the 2 samples are independent of each 
+        # other and if you have some patients values in both data sets then that makes them not independent.
         stats = apply(combination, 2, function(x){
                           distributions = list((df %>% filter(str_detect(variable,
                                                                          paste0("^", x[1], "\\-{0,1}[^\\.]*$"))) %>% .[['value']]),
@@ -380,27 +390,12 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
         names(divergent_colors_seq) = levels(pausing$Time)
         fill = 'Time'
         cols = divergent_colors_seq
-        
-#        pviolin = p + geom_violin(aes_string(x = 'variable', y = 'value', fill = 'Time'))
-#        pviolin = pviolin + scale_fill_manual(values = divergent_colors_seq) + labs(fill = 'Time')
-        
-#        pcumulative = p + scale_colour_manual(values = divergent_colors_seq) + labs(colour = 'Time') + ylab('CDF')
-#        pcumulative = pcumulative + scale_shape_discrete(solid = F)
-        #pcumulative = p + stat_ecdf(aes_string('value', color = 'Time', shape = aesthetics_linetype), geom = "point", pad = F)
-#        pcumulative_final = pcumulative + geom_point(aes_string('value', color = 'Time', linetype = aesthetics_linetype), stat ="myecdf", size = 2)
-
-        # density = counts / sum(counts * bar width)
-#        p = p + geom_line(stat = "density", aes_string(x = 'value', color = 'Time', linetype = aesthetics_linetype))
-#        p = p + scale_colour_manual(values = divergent_colors_seq) + labs(colour = 'Time')
-#        tmp = paste0(annotations[['Time']], '_', tmp)
+        # set what function to be called for colours and with what parameters
+        fcol = 'scale_colour_manual'
+        fparam = 'values'
+        tmp = paste0(annotations[['Time']], '_', tmp)
     } else{
-        pviolin = p + geom_violin(aes_string(x = 'variable', y ='value', fill = 'variable')) + labs(fill = 'Sample')
-        
-        pcumulative = p + scale_shape_discrete(solid = T) + ylab('CDF')
-        #pcumulative = pcumulative + stat_ecdf(aes_string('value', color = 'variable', shape = aesthetics_linetype), geom = "point")
-        
-        p = p + geom_line(stat = "density", aes_string(x = "value", color = 'variable', linetype = aesthetics_linetype))
-
+        fill = 'variable'
         if(any(duplicated(annotations$Replicate))) tmp = as.character(annotations$variable)
 
         if(length(levels(pausing$variable)) > 9){
@@ -408,55 +403,59 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                                       levels(pausing$variable))
             names(default_colors) = levels(pausing$variable)
             cols = default_colors
+            fcol = 'scale_colour_manual'
+            fparam = 'values'
 
-#            pviolin = pviolin + scale_fill_manual(values = default_colors)
-#            pcumulative = pcumulative + scale_colour_manual(values = default_colors)
-#            p = p + scale_colour_manual(values = default_colors)
         } else{
             cols = "Set2"
-#            pviolin = pviolin + scale_fill_brewer(palette = "Set2")
-#            pcumulative = pcumulative + scale_colour_brewer(palette = "Set2")
-#            p = p + scale_colour_brewer(palette = "Set2")
+            fcol = 'scale_colour_brewer'
+            fparam = 'palette'
         }
-        pcumulative_final = pcumulative + geom_point(aes_string('value', color = 'variable', shape = aesthetics_linetype), stat ="myecdf")
     }# }}}
+
+    # Violin plots# {{{
     pviolin = p + geom_violin(aes_string(x = 'variable', y = 'value', fill = fill))
-    pviolin = pviolin + scale_fill_manual(values = cols) + labs(fill = fill)
-        
-    pcumulative = p + scale_colour_manual(values = divergent_colors_seq) + labs(colour = fill) + ylab('CDF')
-    pcumulative = pcumulative + scale_shape_discrete(solid = F)
-    #pcumulative = p + stat_ecdf(aes_string('value', color = 'Time', shape = aesthetics_linetype), geom = "point", pad = F)
-    pcumulative_final = pcumulative + geom_point(aes_string('value', color = 'Time', linetype = aesthetics_linetype), stat ="myecdf", size = 2)
-
-        # density = counts / sum(counts * bar width)
-        p = p + geom_line(stat = "density", aes_string(x = 'value', color = 'Time', linetype = aesthetics_linetype))
-        p = p + scale_colour_manual(values = divergent_colors_seq) + labs(colour = 'Time')
-
+    pviolin = pviolin + eval(parse(text = paste(gsub('colour', 'fill', fcol), '(', fparam, '=cols', ')'))) + labs(fill = fill)
+    
     # adding annotations
-    pviolin_final = pviolin + annotate("text",
+    pviolin = pviolin + annotate("text",
                                        x = annotations$Sample %>% as.numeric() + 0.35,
                                        y = 0,
                                        # left justified
                                        hjust = 0,
                                        label = paste0("n = ", annotations$number))
-    pviolin_final = pviolin_final + coord_flip() + ylab(metric) + xlab('')
+    pviolin = pviolin + coord_flip() + ylab(metric) + xlab('')
+    # }}}
     
+    # ECDF plots# {{{
+    #pcumulative = p + stat_ecdf(aes_string('value', color = fill, shape = aesthetics_linetype), geom = "point", pad = F)
+    pcumulative = p + geom_point(aes_string('value', color = fill, shape = aesthetics_linetype), stat ="myecdf", size = 2)
+    pcumulative = pcumulative + scale_shape_discrete(solid = F)
+    pcumulative = pcumulative + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill) + ylab('CDF')
+    # }}}
+
+    # Density plots# {{{
+    # density = counts / sum(counts * bar width
+    pdens = p + geom_line(stat = "density", aes_string(x = 'value', color = fill, linetype = aesthetics_linetype))
+    pdens = pdens + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill)
+
     # Getting the ggplot range for y axis
-    from_y_limit = ggplot_build(p)$panel$ranges[[1]]$y.range[2]
+    from_y_limit = ggplot_build(pdens)$panel$ranges[[1]]$y.range[2]
     to_y_limit = from_y_limit - (nrow(annotations) * 0.15)
 
     # because if the labels start with numbers then parse doesn't work
     tmp = paste0("`", tmp, "`")
-    p_final = p + annotate("text",
+    pdens = pdens + annotate("text",
                      x = 0,
                      y = seq(from = from_y_limit, to = to_y_limit, length.out = nrow(annotations)),
                      # left justified
                      hjust = 0, parse = TRUE,
                      label = paste("n[", eval(tmp), "] == ", annotations$number))
+    # }}}
 
-    plot(p_final)
-    plot(pviolin_final)
-    plot(pcumulative_final)
+    plot(pdens)
+    plot(pviolin)
+    plot(pcumulative)
     # }}}
 
     if(!is.null(combination)){# {{{
@@ -469,9 +468,11 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                       tmp2 = (pairwise_comp %>% filter(variable == levels(variable)[2]) %>% .[['value']])
                       g(x0, y0, y1) %=% get_ks_dist(tmp1, tmp2)
                       df = data.frame(x0 = x0[1], y0 = y0[1], y1 = y1[1])
-                      pcumulative = pcumulative %+% pairwise_comp
-                      pcumulative = pcumulative + geom_line(aes_string('value', color = 'Time', linetype = aesthetics_linetype),
+                      pcumulative = p %+% pairwise_comp
+                      pcumulative = pcumulative + geom_line(aes_string('value', color = fill, linetype = aesthetics_linetype),
                                                             stat ="myecdf", size = 2)
+                      pcumulative = pcumulative + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) 
+                      pcumulative = pcumulative + labs(colour = fill) + ylab('CDF')
 
                       pcumulative = pcumulative + geom_segment(data = df, aes(x = x0, y = y0, xend = x0, yend = y1),
                                                                linetype = "dotted", color = "#A94777", size = 1)
@@ -480,19 +481,19 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
 
                       # Testing if the distributions are the same with Kolmogorov smirnoff 
                       stats = test_significance(pairwise_comp, as.matrix(x))
+                      d = df$y1 - df$y0
                       pcumulative = pcumulative + annotate("text",
                                                            x = 0,
                                                            y = 0.95,
                                                            # left justified
                                                            hjust = 0,
                                                            label = paste0(stats$method, " (", stats$alternative, ")\n",
-                                                                          "p-value = ", signif(stats$pvalue, 3)))
+                                                                          "p-value = ", round(stats$pvalue, 3), "\n",
+                                                                          "D = ", abs(round(d, 3)), "\n", 
+                                                                          "Dstat = ", abs(round(stats$statistic, 3))))
                       return_list$stats = stats
                   } else {
-                      print('in if')
-                      print(aesthetics_linetype)
-                      preview(plot(pcumulative_final))
-                      pcumulative = pcumulative_final %+% pairwise_comp
+                      pcumulative = pcumulative %+% pairwise_comp
                   }
                   plot(pcumulative)})
     }# }}}
@@ -508,7 +509,7 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
             select(-one_of('Gene', 'gene_id', 'gene_name', 'value')) %>% unique() %>%
             inner_join(n_valid_subset, by = 'variable')
 
-        q = p %+% pausing_subset + facet_grid(.~ Group) + ggtitle(paste(label, subset_name, sep=''))
+        q = pdens %+% pausing_subset + facet_grid(.~ Group) + ggtitle(paste(label, subset_name, sep=''))
         
         n_groups = length(levels(factor(pausing_subset$Group)))
         # Getting the ggplot range for y axis
@@ -530,14 +531,79 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
         plot(qviolin)
 
         if(!is.null(combination)){
-            preview(apply(combination, 2, function(x){
-                      pairwise_comp = pausing_subset %>% filter(grepl(glob2rx(paste0("*", x[1], "-*")), variable) | grepl(glob2rx(paste0("*", x[2], "-*")), variable))
+            apply(combination, 2, function(x){
+                      pairwise_comp = pausing_subset %>% 
+                          filter(str_detect(variable,
+                                            paste0("^", x[1], "\\-{0,1}[^\\.]*$")) | str_detect(variable,
+                                            paste0("^", x[2], "\\-{0,1}[^\\.]*$"))) %>% droplevels()
                       pcumulative = pcumulative %+% pairwise_comp
             plot(pcumulative)
-            return(x)}))
+            return(x)})
         }
     }# }}}
 
+}# }}}
+
+# Calculating qqline # {{{
+get_qqline = function(v){
+    # from http://stackoverflow.com/questions/4357031/qqnorm-and-qqline-in-ggplot2
+    y = quantile(v[!is.na(v)], c(0.25, 0.75))
+    x = qnorm(c(0.25, 0.75))
+    slope = diff(y)/diff(x)
+    int = y[1L] - slope * x[1L]
+    return(list(slope = slope, int = int))
+}# }}}
+
+# reset_par# {{{
+reset_par = function(){
+    # Reset par to defaults in the parent environment
+    eval(quote(par(mfrow = c(1,1))), parent.frame())
+    eval(quote(par(oma = c(0,0,0,0))), parent.frame())
+    eval(quote(par(mar = c(5, 4, 4, 2) + 0.1)), parent.frame())}
+# }}}
+
+# Check for normality via plots and gofstats -- interpret that with caution# {{{
+check_normality = function(x, id = ''){
+    library(MASS)
+    library(e1071)
+    library(raster)
+    # for finding distribution of the data
+    library(fitdistrplus)
+    library(gridExtra)
+    # Remove NA values as descdist complains - affects the qq-lot but how exactly
+    if(any(is.na(x))) warning(sprintf("NA values not allowed, removing %s. Interpret results with caution",
+                                      table(is.na(x))[['TRUE']]))
+
+    x = x[!is.na(x)]
+    gstats = apply(t(bind_cols(as.data.frame(t(as.matrix(test))),
+                       data.frame(sd = sd(x),
+                                  # type = 2 refers to wquation used to compute kurtosis, only type 2 is 
+                                  # unbiased under normality
+                                  kurtosis = kurtosis(x, type = 2),
+                                  skewness = skewness(x, type = 2),
+                                  cv = cv(x)))), 
+                   2, round, 2)
+
+    descdist(x, discrete = FALSE)
+    # Plotting histogram, qqplot, pp-plot and ecdf
+    check_against = c("norm", "lnorm", "pois", "exp", "gamma",
+                      "nbinom", "geom", "beta", "unif", "logis")
+    fits = lapply(check_against, function(d) tryCatch(fitdist(x, d, discrete = F), error = function(e) e))
+    names(fits) = check_against
+    fits = fits[which(unlist(lapply(fits, function(x) !is(x, 'error'))))]
+    lapply(names(fits), function(x) {
+                       par(oma = c(0, 0, 3, 0))
+                       plot(fits[[x]])
+                       title(paste(id, x), outer = TRUE)
+                       reset_par()})
+
+    gofstats = gofstat(fits)
+    tmp_1 = t(apply(do.call(rbind, gofstats[c(1,3:4, 6, 8, 10, 12:13)]), 1, function(x) round(as.numeric(x), 2)))
+    colnames(tmp_1) = names(gofstats$chisq)
+    tmp_2 = do.call(rbind, gofstats[c(7,9,11)])
+    gofstats = rbind(as.data.frame(tmp_1), as.data.frame(tmp_2))
+
+    return(list(gstats = gstats, gofstats = gofstats, fits = fits))
 }# }}}
 
 #PRR = promoter release ratios from Fei Xavier Chen 2015
@@ -555,6 +621,7 @@ main(){
     # for extracting pattern from string with str_extract
     library(stringr)
     library(rtracklayer)
+    library(gridExtra)
 
     files = list.files(pattern=glob2rx(paste("*_gene_signal*",".txt",sep="")), args$bed, full.name = T)
     travelling_ratio = calculate_travelling_ratio_meryem(files)
@@ -614,8 +681,31 @@ main(){
     plot_density(tmp, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition', dlab))
     dev.off()
 
-    subsets = travelling_ratio[1:100, 1, drop=F]
-    subsets = subsets %>% mutate(Group = c(rep('A', 50), rep('B', 50)))
+
+    pdf(file.path(plot_path, paste0('QQ-plots-normality.pdf')))
+    ablines = lapply(levels(TR$variable), function(x) {
+                         as.data.frame(get_qqline((TR %>% filter(variable == x) %>% .[['value']]))) %>%
+                             mutate(variable = x) }) %>%
+                Reduce(function(df1, df2) bind_rows(df1, df2), .) %>%
+                full_join((TR %>% dplyr::select(Replicate, Time, variable) %>% group_by(variable) %>% dplyr::slice(1:1)), by = "variable")
+
+    pp = ggplot(TR, aes(sample = value)) + stat_qq(geom = "point", size = 1) 
+    pp = pp + geom_abline(data = ablines, aes(slope = slope, intercept = int), colour = "red")
+    pp = pp + facet_grid(Time ~ Replicate)
+    pp = pp + theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
+    plot(pp)
+
+    gstats = lapply(levels(TR$variable), function(x){
+                        tmp = TR %>% filter(variable == x) %>% .[['value']]
+                        g(gstats, gofstats, fits) %=% check_normality(tmp, id = x)
+                        plot.new()
+                        grid.table(gofstats)
+                        return(as.data.frame(t(gstats)))}) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .)
+    #preview(grid.table(gstats))
+    dev.off()
+
+    subsets = travelling_ratio[1:150, 1, drop=F]
+    subsets = subsets %>% mutate(Group = c(rep('A', 50), rep('B', 50), rep('C', 50)))
     preview(plot_density(TR, subsets = subsets, subset_name = 'test'))
 
 }
