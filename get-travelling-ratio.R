@@ -179,11 +179,11 @@ calculate_travelling_ratio_meryem = function(files, annotation = args$annotation
 # }}}
 
 calculate_fc = function(travelling_ratio, pattern = "travelling_ratio_filtered"){ #{{{
-    per_condition_tr = travelling_ratio %>% select(gene_id, gene_name, ends_with(pattern))
-    per_condition_tr =  melt(per_condition_tr) %>%
-        tidyr::separate(variable, c('Condition','Replicate'), sep='-') %>%
-        group_by(Condition, gene_id) %>% summarise(mean = mean(value), standard_deviation = sd(value)) %>%
-        ungroup()
+    per_condition_tr = travelling_ratio %>% select(gene_id, gene_name, ends_with(pattern)) %>%
+                        gather(variable, value, -gene_id, -gene_name) %>%
+                        tidyr::separate(variable, c('Condition','Replicate'), sep='-') %>%
+                        group_by(Condition, gene_id) %>% summarise(mean = mean(value), standard_deviation = sd(value)) %>%
+                        ungroup()
 
     # id mean is NA after this, it means that at least one replicate was NA
     per_condition_tr = lapply(split(per_condition_tr, per_condition_tr$Condition), function(x){ 
@@ -318,23 +318,35 @@ test_significance_t = function(df, combination){# {{{
     # unless the deviation from normality is really obvious uou shouldn't worry
     # about using the t-test
    stats =  apply(combination, 2, function(x){
-                      distributions = df %>% select(matches(paste0(x[1], '-mean')), matches(paste0(x[2], '-mean')))
-                      effect_size = seq(0.1, 1, 0.2)
-                      power_estimation = pwr.t.test(n = nrow(distributions), d = effect_size,
-                                                    sig.level = c(0.05), type = "paired")
-                      power_estimation = data.frame(effect = effect_size,
-                                                   power = power_estimation$power,
-                                                   significance_level = power_estimation$sig.level,
-                                                   method = power_estimation$method)
-                      write.table(power_estimation, file.path(output_path,
-                                                              paste0(x[1], '-VS-', x[2],'.t-test-detection-power.tsv')),
-                                  quote = FALSE, row.names = FALSE, sep = "\t")
-                      ttest = t.test(distributions[[1]], distributions[[2]], paired = TRUE, conf.level = 0.95)
-                      ttest = data.frame(comparison = paste0(x[1], '-VS-', x[2]),
-                                         pvalue = ttest$p.value, df = ttest$parameter, null_value = ttest$null.value,
-                                         mean_of_diff = ttest$estimate, t_statistic = ttest$statistic, method = ttest$method)
-               }) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .) %>% 
-                mutate(FDR = p.adjust(pvalue, method = "BH", n = nrow(.)))
+                      distributions = df %>% filter(str_detect(variable, paste0("^", x[1], "\\-{0,1}[^\\.]*$")) | str_detect(variable,  paste0("^", x[2], "\\-{0,1}[^\\.]*$"))) %>% droplevels()
+
+                      if(length(levels(distributions$variable)) == 2){
+                          effect_size = seq(0.1, 1, 0.2)
+                          power_estimation = pwr.t.test(n = nrow(distributions), d = effect_size,
+                                                        sig.level = c(0.05), type = "paired")
+                          power_estimation = data.frame(effect = effect_size,
+                                                       power = power_estimation$power,
+                                                       significance_level = power_estimation$sig.level,
+                                                       method = power_estimation$method)
+                          write.table(power_estimation, file.path(output_path,
+                                                                  paste0(x[1], '-VS-', x[2],'.t-test-detection-power.tsv')),
+                                      quote = FALSE, row.names = FALSE, sep = "\t")
+                          ttest = t.test((distributions %>% filter(variable == levels(variable)[1]) %>% .[['value']]),
+                                         (distributions %>% filter(variable == levels(variable)[2]) %>% .[['value']]),
+                                         conf.level = 0.95, alternative = "two.sided")
+                          ttest = data.frame(comparison = paste0(x[1], '-VS-', x[2]),
+                                             pvalue = ttest$p.value, df = ttest$parameter, null_value = ttest$null.value,
+                                             t_statistic = ttest$statistic,
+                                             alternative = ttest$alternative, method = ttest$method)
+                      } else{
+                          ttest = NA
+                      }
+               })
+
+    if(all(is.na(stats))) return(NULL)
+
+    stats = stats[is.na(stats)] %>% Reduce(function(df1, df2) bind_rows(df1, df2), .) %>% 
+            mutate(FDR = p.adjust(pvalue, method = "BH", n = nrow(.)))
     return(stats)
 }# }}}
 
@@ -491,38 +503,27 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
     # }}}
 
     if(!is.null(combination)){# {{{
+        # Testing if the difference of the distributions is zero 
+        stats = test_significance_t(pausing, combination)
         apply(combination, 2, function(x){
                   pairwise_comp = pausing %>% filter(str_detect(variable, paste0("^", x[1], "\\-{0,1}[^\\.]*$")) | str_detect(variable,  paste0("^", x[2], "\\-{0,1}[^\\.]*$"))) %>% droplevels()
                   
                   if(length(levels(pairwise_comp$variable)) == 2){
-                      # finding the greatest distance in the ECDFs
-                      tmp1 = (pairwise_comp %>% filter(variable == levels(variable)[1]) %>% .[['value']])
-                      tmp2 = (pairwise_comp %>% filter(variable == levels(variable)[2]) %>% .[['value']])
-                      g(x0, y0, y1) %=% get_ks_dist(tmp1, tmp2)
-                      df = data.frame(x0 = x0[1], y0 = y0[1], y1 = y1[1])
                       pcumulative = p %+% pairwise_comp
                       pcumulative = pcumulative + geom_line(aes_string('value', color = fill, linetype = aesthetics_linetype),
                                                             stat ="myecdf", size = 2)
                       pcumulative = pcumulative + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) 
                       pcumulative = pcumulative + labs(colour = fill) + ylab('CDF')
 
-                      pcumulative = pcumulative + geom_segment(data = df, aes(x = x0, y = y0, xend = x0, yend = y1),
-                                                               linetype = "dotted", color = "#A94777", size = 1)
-                      pcumulative = pcumulative + geom_point(data = df, aes(x = x0 , y = y0), color = "#A94777", size = 3)
-                      pcumulative = pcumulative + geom_point(data = df, aes(x = x0 , y = y1), color = "#A94777", size = 3)
-
-                      # Testing if the distributions are the same with Kolmogorov smirnoff 
-                      stats = test_significance_ks(pairwise_comp, as.matrix(x))
-                      d = df$y1 - df$y0
                       pcumulative = pcumulative + annotate("text",
                                                            x = 0,
                                                            y = 0.95,
                                                            # left justified
                                                            hjust = 0,
                                                            label = paste0(stats$method, " (", stats$alternative, ")\n",
-                                                                          "p-value = ", round(stats$pvalue, 3), "\n",
-                                                                          "D = ", abs(round(d, 3)), "\n", 
-                                                                          "Dstat = ", abs(round(stats$statistic, 3))))
+                                                                          "FDR = ", round(stats$FDR, 3), "\n",
+                                                                          "Mean of the differences = ", abs(round(stats$mean_of_diff, 3)), 
+                                                                          "p-value = ", round(stats$pvalue, 3), "\n"))
                       return_list$stats = stats
                   } else {
                       pcumulative = pcumulative %+% pairwise_comp
@@ -689,8 +690,9 @@ main(){
         }
     }
 
-    # Melt travelling ratios and order according to times if samples from timecourse
-    TR = melt(travelling_ratio %>% select(gene_id, gene_name, ends_with("travelling_ratio_filtered")))
+    # Melt travelling ratios and order according to times if samples from timecourse - gather() == melt()
+    TR = travelling_ratio %>% select(gene_id, gene_name, ends_with("travelling_ratio_filtered")) %>%
+        gather(variable, value, -gene_id, -gene_name)
     TR = format_melted(TR)
 
     pdf(file.path(plot_path, paste0('QQ-plots-normality.pdf')))# {{{
@@ -723,25 +725,18 @@ main(){
     dev.off()
     
     # per_condition_tr is of class "tbl_df" and melt doesn't play nice with that
-    tmp = melt(as.data.frame(per_condition_tr))
-    tmp = tmp %>% separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
+    tmp = per_condition_tr %>%
+          gather(variable, value, -gene_id) %>%
+          separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
     tmp = format_melted(tmp)
     
     pdf(file.path(plot_path, paste0('density-plots-mean', dlab, '.pdf')))
     plot_density(tmp, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition', dlab))
     dev.off()
 
-    valid = per_condition_tr %>% na.omit()
-    combination = combn(mixedsort(conditions), 2)
-    pairwise_diff = apply(combination, 2, function(x){
-                            first = valid %>% select(matches(paste0(x[2], '-mean')))
-                            second = valid %>% select(matches(paste0(x[1], '-mean')))
-                            difference = first - second
-                            difference = data.frame(gene_id = valid[['gene_id']], difference = difference)
-                            colnames(difference) = c('gene_id', paste(x[2], x[1], sep = '-'))
-                            return(difference)
-        }) %>%
-        Reduce(function(df1, df2) full_join(df1, df2, by = 'gene_id'), .)
+    valid = per_condition_tr %>% na.omit() %>% gather(variable)
+    valid = valid %>% separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
+    valid = format_melted(valid)
     
     pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '.pdf')))
     plot_density(valid, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition (common in all)', dlab))
