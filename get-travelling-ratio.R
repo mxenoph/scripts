@@ -55,6 +55,14 @@ preview = function(f) {
     dev.off()
 }# }}}
 
+# reset_par# {{{
+reset_par = function(){
+    # Reset par to defaults in the parent environment
+    eval(quote(par(mfrow = c(1,1))), parent.frame())
+    eval(quote(par(oma = c(0,0,0,0))), parent.frame())
+    eval(quote(par(mar = c(5, 4, 4, 2) + 0.1)), parent.frame())}
+# }}}
+
 # Return a list with indexes of times in minutes and the respective values in h# {{{
 convert_time = function(x) {
     index = grepl('m', x)
@@ -270,6 +278,66 @@ annotate_df = function(df, metadata = args$targets){# {{{
     }
 }# }}}
 
+test_significance_ks = function(df, combination){# {{{
+    # unlike the t-statistic, the value of the D statistic (and hence the P value) 
+    # is not affected by scale changes like using log. The KS-test is a robust test that 
+    # cares only about the relative distribution of the data.
+    # Unequal dataset size is not a problem for the KS-test.
+    # distribution of the test statistic is based on the assumption that the distributions are continuous 
+    # => ties are impossible. When there are ties the distribution is affected in such a way that depends on the 
+    # pattern of ties and approximations of the p-values are reported instead. p-value is HEAVILY affected when 
+    # large number of ties
+    # If so, then that will affect the results, the assumption is that the 2 samples are independent of each 
+    # other and if you have some patients values in both data sets then that makes them not independent.
+    stats = apply(combination, 2, function(x){
+                      distributions = list((df %>% filter(str_detect(variable,
+                                                                     paste0("^", x[1], "\\-{0,1}[^\\.]*$"))) %>% .[['value']]),
+                                           (df %>% filter(str_detect(variable,
+                                                                     paste0("^", x[2], "\\-{0,1}[^\\.]*$"))) %>% .[['value']]))
+                      names(distributions) = x
+                      ks = ks.test(distributions[[1]], distributions[[2]])
+                      ks = data.frame(comparison = paste0(x[1], '-VS-', x[2]),
+                                      pvalue = ks$p.value, alternative = ks$alternative, method = ks$method)
+               }) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .)
+    return(stats)
+}# }}}
+
+get_ks_dist = function(first_dist, second_dist) {# {{{
+    first_cdf = ecdf(first_dist)
+    second_cdf = ecdf(second_dist)
+    # find min and max statistics to draw line between points of greatest distance
+    min_max_stats = seq(min(first_dist, second_dist), max(first_dist, second_dist),
+                        length.out = min(length(first_dist), length(second_dist)))
+    x0 = min_max_stats[which( abs(first_cdf(min_max_stats) - second_cdf(min_max_stats)) == max(abs(first_cdf(min_max_stats) - second_cdf(min_max_stats))) )]
+    y0 = first_cdf(x0)
+    y1 = second_cdf(x0)
+    return(list('x0' = x0, 'y0' = y0, 'y1' = y1))
+}# }}}
+
+test_significance_t = function(df, combination){# {{{
+    # unless the deviation from normality is really obvious uou shouldn't worry
+    # about using the t-test
+   stats =  apply(combination, 2, function(x){
+                      distributions = df %>% select(matches(paste0(x[1], '-mean')), matches(paste0(x[2], '-mean')))
+                      effect_size = seq(0.1, 1, 0.2)
+                      power_estimation = pwr.t.test(n = nrow(distributions), d = effect_size,
+                                                    sig.level = c(0.05), type = "paired")
+                      power_estimation = data.frame(effect = effect_size,
+                                                   power = power_estimation$power,
+                                                   significance_level = power_estimation$sig.level,
+                                                   method = power_estimation$method)
+                      write.table(power_estimation, file.path(output_path,
+                                                              paste0(x[1], '-VS-', x[2],'.t-test-detection-power.tsv')),
+                                  quote = FALSE, row.names = FALSE, sep = "\t")
+                      ttest = t.test(distributions[[1]], distributions[[2]], paired = TRUE, conf.level = 0.95)
+                      ttest = data.frame(comparison = paste0(x[1], '-VS-', x[2]),
+                                         pvalue = ttest$p.value, df = ttest$parameter, null_value = ttest$null.value,
+                                         mean_of_diff = ttest$estimate, t_statistic = ttest$statistic, method = ttest$method)
+               }) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .) %>% 
+                mutate(FDR = p.adjust(pvalue, method = "BH", n = nrow(.)))
+    return(stats)
+}# }}}
+
 # Plotting density# {{{
 plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', metric = 'Travelling Ratio', combination = NULL){
     get_valid_n = function(pausing){# {{{
@@ -287,30 +355,6 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
         return_list$pausing = pausing
         return_list$n_valid = n_valid
         return(return_list)
-    }# }}}
-
-    test_significance = function(df, combination){# {{{
-        # unlike the t-statistic, the value of the D statistic (and hence the P value) 
-        # is not affected by scale changes like using log. The KS-test is a robust test that 
-        # cares only about the relative distribution of the data.
-        # Unequal dataset size is not a problem for the KS-test.
-        # distribution of the test statistic is based on the assumption that the distributions are continuous 
-        # => ties are impossible. When there are ties the distribution is affected in such a way that depends on the 
-        # pattern of ties and approximations of the p-values are reported instead. p-value is HEAVILY affected when 
-        # large number of ties
-        # If so, then that will affect the results, the assumption is that the 2 samples are independent of each 
-        # other and if you have some patients values in both data sets then that makes them not independent.
-        stats = apply(combination, 2, function(x){
-                          distributions = list((df %>% filter(str_detect(variable,
-                                                                         paste0("^", x[1], "\\-{0,1}[^\\.]*$"))) %>% .[['value']]),
-                                               (df %>% filter(str_detect(variable,
-                                                                         paste0("^", x[2], "\\-{0,1}[^\\.]*$"))) %>% .[['value']]))
-                          names(distributions) = x
-                          ks = ks.test(distributions[[1]], distributions[[2]])
-                          ks = data.frame(comparison = paste0(x[1], '-VS-', x[2]),
-                                          pvalue = ks$p.value, alternative = ks$alternative, method = ks$method)
-                   }) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .)
-        return(stats)
     }# }}}
 
     # ggplot extrapolated when computing the ecdf (stat_ecdf(pad = F) does not work).# {{{
@@ -346,18 +390,6 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                          },
                          default_aes = aes(y = ..y..),
                          required_aes = c("x"))# }}}
-
-    get_ks_dist = function(first_dist, second_dist) {# {{{
-        first_cdf = ecdf(first_dist)
-        second_cdf = ecdf(second_dist)
-        # find min and max statistics to draw line between points of greatest distance
-        min_max_stats = seq(min(first_dist, second_dist), max(first_dist, second_dist),
-                            length.out = min(length(first_dist), length(second_dist)))
-        x0 = min_max_stats[which( abs(first_cdf(min_max_stats) - second_cdf(min_max_stats)) == max(abs(first_cdf(min_max_stats) - second_cdf(min_max_stats))) )]
-        y0 = first_cdf(x0)
-        y1 = second_cdf(x0)
-        return(list('x0' = x0, 'y0' = y0, 'y1' = y1))
-    }# }}}
 
     return_list = list()
     if(! 'Gene' %in% colnames(pausing)){
@@ -480,7 +512,7 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                       pcumulative = pcumulative + geom_point(data = df, aes(x = x0 , y = y1), color = "#A94777", size = 3)
 
                       # Testing if the distributions are the same with Kolmogorov smirnoff 
-                      stats = test_significance(pairwise_comp, as.matrix(x))
+                      stats = test_significance_ks(pairwise_comp, as.matrix(x))
                       d = df$y1 - df$y0
                       pcumulative = pcumulative + annotate("text",
                                                            x = 0,
@@ -554,14 +586,6 @@ get_qqline = function(v){
     return(list(slope = slope, int = int))
 }# }}}
 
-# reset_par# {{{
-reset_par = function(){
-    # Reset par to defaults in the parent environment
-    eval(quote(par(mfrow = c(1,1))), parent.frame())
-    eval(quote(par(oma = c(0,0,0,0))), parent.frame())
-    eval(quote(par(mar = c(5, 4, 4, 2) + 0.1)), parent.frame())}
-# }}}
-
 # Check for normality via plots and gofstats -- interpret that with caution# {{{
 check_normality = function(x, id = ''){
     library(MASS)
@@ -605,6 +629,7 @@ check_normality = function(x, id = ''){
 
     return(list(gstats = gstats, gofstats = gofstats, fits = fits))
 }# }}}
+
 
 #PRR = promoter release ratios from Fei Xavier Chen 2015
 calculate_PRR = function(rpms, tss, peaks){
@@ -668,21 +693,7 @@ main(){
     TR = melt(travelling_ratio %>% select(gene_id, gene_name, ends_with("travelling_ratio_filtered")))
     TR = format_melted(TR)
 
-    pdf(file.path(plot_path, 'density-plots.pdf'))
-    plot_density(TR, combination = combn(mixedsort(conditions),2), label = 'Full dataset')
-    dev.off()
-    
-    # per_condition_tr is of class "tbl_df" and melt doesn't play nice with that
-    tmp = melt(as.data.frame(per_condition_tr))
-    tmp = tmp %>% separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
-    tmp = format_melted(tmp)
-    
-    pdf(file.path(plot_path, paste0('density-plots-mean', dlab, '.pdf')))
-    plot_density(tmp, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition', dlab))
-    dev.off()
-
-
-    pdf(file.path(plot_path, paste0('QQ-plots-normality.pdf')))
+    pdf(file.path(plot_path, paste0('QQ-plots-normality.pdf')))# {{{
     ablines = lapply(levels(TR$variable), function(x) {
                          as.data.frame(get_qqline((TR %>% filter(variable == x) %>% .[['value']]))) %>%
                              mutate(variable = x) }) %>%
@@ -701,8 +712,42 @@ main(){
                         plot.new()
                         grid.table(gofstats)
                         return(as.data.frame(t(gstats)))}) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .)
-    #preview(grid.table(gstats))
+    gstats = gstats %>% mutate(sample = levels(TR$variable))
+    write.table(gstats,
+                file = file.path(output_path, paste0('per_replicate_stats.tsv')),
+                quote = F, row.names = F, sep ="\t")
+    dev.off()# }}}
+
+    pdf(file.path(plot_path, 'density-plots.pdf'))
+    plot_density(TR, combination = combn(mixedsort(conditions),2), label = 'Full dataset')
     dev.off()
+    
+    # per_condition_tr is of class "tbl_df" and melt doesn't play nice with that
+    tmp = melt(as.data.frame(per_condition_tr))
+    tmp = tmp %>% separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
+    tmp = format_melted(tmp)
+    
+    pdf(file.path(plot_path, paste0('density-plots-mean', dlab, '.pdf')))
+    plot_density(tmp, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition', dlab))
+    dev.off()
+
+    valid = per_condition_tr %>% na.omit()
+    combination = combn(mixedsort(conditions), 2)
+    pairwise_diff = apply(combination, 2, function(x){
+                            first = valid %>% select(matches(paste0(x[2], '-mean')))
+                            second = valid %>% select(matches(paste0(x[1], '-mean')))
+                            difference = first - second
+                            difference = data.frame(gene_id = valid[['gene_id']], difference = difference)
+                            colnames(difference) = c('gene_id', paste(x[2], x[1], sep = '-'))
+                            return(difference)
+        }) %>%
+        Reduce(function(df1, df2) full_join(df1, df2, by = 'gene_id'), .)
+    
+    pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '.pdf')))
+    plot_density(valid, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition (common in all)', dlab))
+    dev.off()
+
+    b = test_significance_t(valid, combination)
 
     subsets = travelling_ratio[1:150, 1, drop=F]
     subsets = subsets %>% mutate(Group = c(rep('A', 50), rep('B', 50), rep('C', 50)))
