@@ -272,7 +272,7 @@ annotate_df = function(df, metadata = args$targets){# {{{
             mutate(annotation_files = ifelse((gene_id %in% df[['gene_id']]) & (gene_id %in% metadata[['gene_id']]),
                                              'both',
                                              ifelse((gene_id %in% df[['gene_id']]), 'args_annotation', 'target_file')))
-        return(annotated)
+        return(list(annotated = annotated, targets = metadata))
     } else {
         stop("Not annotating genes with regard to metadata provided. No gene column found")
     }
@@ -333,7 +333,8 @@ test_significance_t = function(df, combination){# {{{
                                       quote = FALSE, row.names = FALSE, sep = "\t")
                           ttest = t.test((distributions %>% filter(variable == levels(variable)[1]) %>% .[['value']]),
                                          (distributions %>% filter(variable == levels(variable)[2]) %>% .[['value']]),
-                                         conf.level = 0.95, alternative = "two.sided")
+                                         conf.level = 0.95)
+                                         #conf.level = 0.95, alternative = "two.sided")
                           ttest = data.frame(comparison = paste0(x[1], '-VS-', x[2]),
                                              pvalue = ttest$p.value, df = ttest$parameter, null_value = ttest$null.value,
                                              t_statistic = ttest$statistic,
@@ -342,16 +343,18 @@ test_significance_t = function(df, combination){# {{{
                           ttest = NA
                       }
                })
+    if(all(is.na(stats))) return(NA)
 
-    if(all(is.na(stats))) return(NULL)
-
-    stats = stats[is.na(stats)] %>% Reduce(function(df1, df2) bind_rows(df1, df2), .) %>% 
+    stats = stats[!is.na(stats)] %>% Reduce(function(df1, df2) bind_rows(df1, df2), .) %>% 
             mutate(FDR = p.adjust(pvalue, method = "BH", n = nrow(.)))
     return(stats)
 }# }}}
 
 # Plotting density# {{{
 plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', metric = 'Travelling Ratio', combination = NULL){
+    library(ggplot2)
+    library(RColorBrewer)
+
     get_valid_n = function(pausing){# {{{
         return_list = list()
         if('Group' %in% colnames(pausing)){
@@ -404,15 +407,15 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                          required_aes = c("x"))# }}}
 
     return_list = list()
-    if(! 'Gene' %in% colnames(pausing)){
-        pausing = add_rownames(as.data.frame(pausing), var = "Gene")
+    if(! 'gene_id' %in% colnames(pausing)){
+        pausing = add_rownames(as.data.frame(pausing), var = "gene_id")
     }
     g(pausing, n_valid) %=% get_valid_n(pausing)
     
     # sample column to be used in violinplot so I can tweak the geom_text positions
     annotations = pausing %>% 
         mutate(Sample = plyr::mapvalues(variable, from = levels(variable), to = 1:length(levels(variable)))) %>% 
-        select(-one_of('Gene', 'gene_id', 'gene_name', 'value')) %>% unique() %>%
+        select(-one_of('gene_id', 'gene_name', 'value')) %>% unique() %>%
         inner_join(n_valid, by = 'variable')
     
     # Plot basics# {{{
@@ -458,8 +461,10 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
     }# }}}
 
     # Violin plots# {{{
-    pviolin = p + geom_violin(aes_string(x = 'variable', y = 'value', fill = fill))
-    pviolin = pviolin + eval(parse(text = paste(gsub('colour', 'fill', fcol), '(', fparam, '=cols', ')'))) + labs(fill = fill)
+    #pviolin = p + geom_violin(aes_string(x = 'variable', y = 'value', colour = fill))
+    pviolin = p + geom_boxplot(aes_string(x = 'variable', y = 'value', colour = fill), notch = FALSE, varwidth = TRUE)
+    #pviolin = pviolin + eval(parse(text = paste(gsub('colour', 'fill', fcol), '(', fparam, '=cols', ')'))) + labs(colour = fill)
+    pviolin = pviolin + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill)
     
     # adding annotations
     pviolin = pviolin + annotate("text",
@@ -490,11 +495,11 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
     # because if the labels start with numbers then parse doesn't work
     tmp = paste0("`", tmp, "`")
     pdens = pdens + annotate("text",
-                     x = 0,
-                     y = seq(from = from_y_limit, to = to_y_limit, length.out = nrow(annotations)),
-                     # left justified
-                     hjust = 0, parse = TRUE,
-                     label = paste("n[", eval(tmp), "] == ", annotations$number))
+                                  x = 0,
+                                  y = seq(from = from_y_limit, to = to_y_limit, length.out = nrow(annotations)),
+                                  # left justified
+                                  hjust = 0, parse = TRUE,
+                                  label = paste("n[", eval(tmp), "] == ", annotations$number))
     # }}}
 
     plot(pdens)
@@ -505,6 +510,13 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
     if(!is.null(combination)){# {{{
         # Testing if the difference of the distributions is zero 
         stats = test_significance_t(pausing, combination)
+        if(is(stats, 'data.frame')) {
+            filename = gsub(' ', '_', label)
+            if(filename != '') filename = paste0(filename, '.')
+
+            write.table(stats, file.path(output_path, paste0(filename, 'paired-t-test.tsv')),
+                        quote = FALSE, row.names = FALSE, sep = "\t")
+        }
         apply(combination, 2, function(x){
                   pairwise_comp = pausing %>% filter(str_detect(variable, paste0("^", x[1], "\\-{0,1}[^\\.]*$")) | str_detect(variable,  paste0("^", x[2], "\\-{0,1}[^\\.]*$"))) %>% droplevels()
                   
@@ -515,15 +527,15 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                       pcumulative = pcumulative + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) 
                       pcumulative = pcumulative + labs(colour = fill) + ylab('CDF')
 
+                      tmp = stats %>% filter(comparison == paste0(x[1], '-VS-', x[2]))
                       pcumulative = pcumulative + annotate("text",
                                                            x = 0,
                                                            y = 0.95,
                                                            # left justified
                                                            hjust = 0,
-                                                           label = paste0(stats$method, " (", stats$alternative, ")\n",
-                                                                          "FDR = ", round(stats$FDR, 3), "\n",
-                                                                          "Mean of the differences = ", abs(round(stats$mean_of_diff, 3)), 
-                                                                          "p-value = ", round(stats$pvalue, 3), "\n"))
+                                                           label = paste0(tmp$method, " (", tmp$alternative, ")\n",
+                                                                          "FDR = ", round(tmp$FDR, 3), "\n"))#,
+                                                                         # "p-value = ", round(tmp$pvalue, 3), "\n"))
                       return_list$stats = stats
                   } else {
                       pcumulative = pcumulative %+% pairwise_comp
@@ -533,35 +545,44 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
 
     # Subsets # {{{
     if (!is.null(subsets)){
-        print('in subsets')
         pausing_subset = pausing %>% inner_join(subsets, by = "gene_id") %>% droplevels()
         g(n_valid_subset, pausing_subset, n_valid) %=% get_valid_n(pausing_subset)
 
-        annotations = pausing %>% 
+        annotations_subset = pausing_subset %>% 
             mutate(Sample = plyr::mapvalues(variable, from = levels(variable), to = 1:length(levels(variable)))) %>% 
-            select(-one_of('Gene', 'gene_id', 'gene_name', 'value')) %>% unique() %>%
-            inner_join(n_valid_subset, by = 'variable')
-
-        q = pdens %+% pausing_subset + facet_grid(.~ Group) + ggtitle(paste(label, subset_name, sep=''))
+            select(-one_of('gene_id', 'gene_name', 'value')) %>% unique() %>%
+            inner_join(n_valid_subset, by = c('variable', 'Group')) %>%
+            mutate(tmp = paste0("n[", variable, "] == ", number), 
+                   x = as.numeric(Sample) + 0.35)
         
-        n_groups = length(levels(factor(pausing_subset$Group)))
-        # Getting the ggplot range for y axis
-        from_y_limit = ggplot_build(q)$panel$ranges[[1]]$y.range[2]
-        to_y_limit = from_y_limit - ((nrow(annotations)/n_groups) * 0.5)
-        y_range4labels = seq(from = from_y_limit, to = to_y_limit, length.out = (nrow(annotations)/n_groups))
-        y_range4labels = rep(y_range4labels, n_groups)
-        q = q + geom_text(data = annotations,
-                         aes(x = 0, y = y_range4labels),
-                         # left justified
-                         hjust = 0, parse = TRUE,
-                         label = paste("n[", rep(tmp, n_groups), "] == ", annotations$number))
+        pausing_subset_ann = pausing_subset %>% 
+            left_join(annotations_subset, by = c(unique(c(fill, 'variable')), 'Group'))
 
-        # not adding annotation to this plot as it gets too crowded
-        qviolin = pviolin %+% pausing_subset + facet_grid(.~ Group)
-        qviolin = qviolin + ggtitle(paste(label, subset_name, sep='')) + coord_flip() + ylab(metric) + xlab('')
-
-        plot(q)
-        plot(qviolin)
+        a = pausing_subset_ann %>% group_by(Group) %>%
+            do(a = ggplot(data = .) +
+               geom_boxplot(aes_string(x = 'variable', y = 'value', colour = fill), notch = FALSE, varwidth = TRUE) +
+               facet_grid(~ Group) +
+               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill) +
+               annotate("text", y = 0, x = unique(.$x),
+                        label = paste0("n = ",
+                                       data.frame(a = .$variable, b = .$number) %>% unique() %>% .[['b']]),
+                        hjust = 0) + 
+               ggtitle(paste(label, subset_name, sep='')) + coord_flip() + ylab(metric) + xlab('') +
+               theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
+                )
+        b = pausing_subset_ann %>% group_by(Group) %>%
+            do(pviolin %+% . +
+               geom_boxplot(aes_string(x = 'variable', y = 'value', colour = fill), notch = FALSE, varwidth = TRUE) +
+               facet_grid(~ Group) +
+               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill) +
+               annotate("text", y = 0, x = unique(.$x),
+                        label = paste0("n = ",
+                                       data.frame(a = .$variable, b = .$number) %>% unique() %>% .[['b']]),
+                        hjust = 0) + 
+               ggtitle(paste(label, subset_name, sep='')) + coord_flip() + ylab(metric) + xlab('') +
+               theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
+                )
+        preview(lapply(a$a, plot))
 
         if(!is.null(combination)){
             apply(combination, 2, function(x){
@@ -648,6 +669,7 @@ main(){
     library(stringr)
     library(rtracklayer)
     library(gridExtra)
+    library(ggplot2)
 
     files = list.files(pattern=glob2rx(paste("*_gene_signal*",".txt",sep="")), args$bed, full.name = T)
     travelling_ratio = calculate_travelling_ratio_meryem(files)
@@ -679,7 +701,7 @@ main(){
     }# }}}
 
     if(!is.null(args$targets)){
-        fc_annotated = tryCatch(annotate_df(fc),
+        g(fc_annotated, targets) %=% tryCatch(annotate_df(fc),
                        error=function(e) e)
         if(is(fc_annotated, 'error')) {
             warning('Could not annotate the data frame (no file written).')
@@ -734,19 +756,16 @@ main(){
     plot_density(tmp, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition', dlab))
     dev.off()
 
-    valid = per_condition_tr %>% na.omit() %>% gather(variable)
+    valid = per_condition_tr %>% na.omit() %>% gather(variable, value, -gene_id)
     valid = valid %>% separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
     valid = format_melted(valid)
     
     pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '.pdf')))
-    plot_density(valid, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition (common in all)', dlab))
+    plot_density(valid, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition-common in all', dlab))
     dev.off()
-
-    b = test_significance_t(valid, combination)
-
-    subsets = travelling_ratio[1:150, 1, drop=F]
-    subsets = subsets %>% mutate(Group = c(rep('A', 50), rep('B', 50), rep('C', 50)))
-    preview(plot_density(TR, subsets = subsets, subset_name = 'test'))
+    
+    subsets = targets %>% mutate(Group = ifelse(is.na(Bound), 'Not Bound', as.character(Bound))) %>% select(-Bound)
+    preview(plot_density(valid, subsets = subsets, subset_name = 'test'))
 
 }
 
