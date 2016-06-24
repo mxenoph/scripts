@@ -548,43 +548,54 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
         pausing_subset = pausing %>% inner_join(subsets, by = "gene_id") %>% droplevels()
         g(n_valid_subset, pausing_subset, n_valid) %=% get_valid_n(pausing_subset)
 
-        annotations_subset = pausing_subset %>% 
+        pausing_subset = pausing_subset %>% 
             mutate(Sample = plyr::mapvalues(variable, from = levels(variable), to = 1:length(levels(variable)))) %>% 
             select(-one_of('gene_id', 'gene_name', 'value')) %>% unique() %>%
             inner_join(n_valid_subset, by = c('variable', 'Group')) %>%
-            mutate(tmp = paste0("n[", variable, "] == ", number), 
-                   x = as.numeric(Sample) + 0.35)
-        
-        pausing_subset_ann = pausing_subset %>% 
-            left_join(annotations_subset, by = c(unique(c(fill, 'variable')), 'Group'))
+            mutate(x = as.numeric(Sample) + 0.35) %>%
+            right_join(pausing_subset, by = c(unique(c(fill, 'variable')), 'Group'))
 
-        a = pausing_subset_ann %>% group_by(Group) %>%
-            do(a = ggplot(data = .) +
+        plot_per_group = pausing_subset %>% group_by(Group) %>%# {{{
+            # To access the data `do` needs to be used with gggplot(data = .) and not p + %+% .
+            # This is important for adding the annotation
+            do(plots = ggplot(data = .) +
                geom_boxplot(aes_string(x = 'variable', y = 'value', colour = fill), notch = FALSE, varwidth = TRUE) +
-               facet_grid(~ Group) +
-               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill) +
+               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) +
+
                annotate("text", y = 0, x = unique(.$x),
                         label = paste0("n = ",
                                        data.frame(a = .$variable, b = .$number) %>% unique() %>% .[['b']]),
                         hjust = 0) + 
-               ggtitle(paste(label, subset_name, sep='')) + coord_flip() + ylab(metric) + xlab('') +
+               labs(title = paste(label, subset_name, sep=''),
+                    subtitle = unique(.$Group), 
+                    y = metric, 
+                    x = '', 
+                    colour = fill) + coord_flip() +
                theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
-                )
-        b = pausing_subset_ann %>% group_by(Group) %>%
-            do(pviolin %+% . +
-               geom_boxplot(aes_string(x = 'variable', y = 'value', colour = fill), notch = FALSE, varwidth = TRUE) +
-               facet_grid(~ Group) +
-               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill) +
-               annotate("text", y = 0, x = unique(.$x),
-                        label = paste0("n = ",
-                                       data.frame(a = .$variable, b = .$number) %>% unique() %>% .[['b']]),
-                        hjust = 0) + 
-               ggtitle(paste(label, subset_name, sep='')) + coord_flip() + ylab(metric) + xlab('') +
+                )# }}}
+
+        lapply(plots_per_group$plots, plot)
+        
+        summary_plot = pausing_subset %>% ggplot(data = .) +
+               geom_boxplot(aes_string(x = 'Group', y = 'value', colour = fill), notch = FALSE, varwidth = FALSE) +
+               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) +
+               labs(title = paste(label, subset_name, sep=''),
+                    subtitle = 'test', 
+                    y = metric, 
+                    x = '') + coord_flip() +
                theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
-                )
-        preview(lapply(a$a, plot))
+           
+        preview(plot(summary_plot))
 
         if(!is.null(combination)){
+            stats = test_significance_t(pausing_subset, combination)
+            if(is(stats, 'data.frame')) {
+                filename = gsub(' ', '_', label)
+                if(filename != '') filename = paste0(filename, '.')
+
+                write.table(stats, file.path(output_path, paste0(filename, 'paired-t-test.tsv')),
+                            quote = FALSE, row.names = FALSE, sep = "\t")
+            }
             apply(combination, 2, function(x){
                       pairwise_comp = pausing_subset %>% 
                           filter(str_detect(variable,
