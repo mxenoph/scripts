@@ -63,6 +63,18 @@ export_counts = function(counts_path) {
         names(counts) = basename(file_path_sans_ext(counts_files))
         write.table(counts, file.path(counts_path, 'experiment-counts.tsv'), row.names = T, col.names = T, quote = F, sep = "\t")
     }
+    # tested against DESeqDataSetFromHTSeqCount the size factors are computed only on the genes, not the 
+    # ambiguous and no features
+    counts = add_rownames(counts, var = 'Gene')
+    # Cleaning up htseq-count output
+    counts = counts %>% filter(! Gene %in% c('__no_feature',
+                                            '__ambiguous', 
+                                            '__too_low_aQual',
+                                            '__not_aligned',
+                                            '__alignment_not_unique')) %>%
+    droplevels()
+    rownames(counts) = counts[['Gene']]
+    counts = counts[,-1]
     return(counts)
 }# }}}
 
@@ -270,7 +282,7 @@ plot_fpkm = function(fpkms, markers, first_contrast = NULL, second_contrast = NU
         p = p + geom_point(size = 2) + scale_color_manual(values = gg)
         
         txt_angle = 20
-        if(f_subset %>% select(Gene) %>% unique() %>% .[[1]] %>% length() > 12) txt_angle = 90
+        if(f_subset %>% dplyr::select(Gene) %>% unique() %>% .[[1]] %>% length() > 12) txt_angle = 90
 
         p = p + theme_bw() + theme(strip.text.x = element_text(size = 11, colour = "black"),
                                    axis.text.x = element_text(angle = txt_angle, size = 11)) 
@@ -282,8 +294,8 @@ plot_fpkm = function(fpkms, markers, first_contrast = NULL, second_contrast = NU
     markers = markers %>% dplyr::rename(Gene = ensembl_gene_id)
     fpkms_subset = fpkms %>% inner_join(markers, by = "Gene")
     if(!is.null(results)){
-        fpkms_subset = fpkms_subset %>% inner_join(results %>% select(Gene, padj), by = "Gene")
-        fpkms_subset = fpkms_subset %>% mutate(FDR = ifelse(padj < 0.05, '< 0.05', '>= 0.05')) %>% select(-padj)
+        fpkms_subset = fpkms_subset %>% inner_join(as.data.frame(results) %>% dplyr::select(Gene, padj), by = "Gene")
+        fpkms_subset = fpkms_subset %>% mutate(FDR = ifelse(padj < 0.05, '< 0.05', '>= 0.05')) %>% dplyr::select(-padj)
         fpkms_subset = reshape2::melt(fpkms_subset, id = c("Gene", "external_gene_id", "state", "FDR"))
     } else {
         fpkms_subset = reshape2::melt(fpkms_subset, id = c("Gene", "external_gene_id", "state"))
@@ -340,6 +352,27 @@ plot_density = function(deseq_res, subsets = NULL, subset_name = NULL, label = "
     }
     
 }# }}}
+
+#still working on it
+get_expression_quartiles = function(tpms, contrast){
+    quartiles = melt(tpms) %>% mutate(Contrast = variable) %>%
+        mutate(Contrast = ifelse(Contrast %in% names(contrast),contrast[Contrast], Contrast))
+
+    # not sure when to use the 'valid' quartiles, which is when I remove the not expressed genes, TPM == 0
+    valid = quartiles %>% filter(value != 0) %>% mutate(value = log2(1 + value)) %>% 
+        group_by(Contrast) %>% mutate(quartiles_valid = ntile(value, 4)) %>% ungroup()
+    quartiles = quartiles %>% mutate(value = log2(1 + value)) %>% group_by(variable) %>%
+                mutate(quartiles_all = ntile(value, 4)) %>% ungroup()
+
+    quartiles = left_join(quartiles, valid, by = c("Gene", "variable", "value", "Contrast")) %>%
+        mutate(quartiles_valid = ifelse(is.na(quartiles_valid), 0, quartiles_valid))
+
+    quartiles %>% group_by(Contrast) %>% head()
+    
+    return(quartiles)
+}
+
+
 
 #Make a plotting function# {{{
 plotDE<-function(res, fdr){
