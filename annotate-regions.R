@@ -108,10 +108,35 @@ annotate = function(grange, annotations, output_path, target,# {{{
 }
 # }}}
 
+# plotting# {{{
+plot_annotation  = function(anno, target){
+    plot_data = as.data.frame(t(anno)) %>% add_rownames(var='Regions')
+    plot_data = reshape2::melt(plot_data) %>% rename(Feature = variable)
+
+    ordering = c('2000-tss-500','intergenic', 'first-exon', 'exons', 'first-intron', 'introns','active_enhancers', 'poised_enhancers')
+    plot_data$Feature = factor(plot_data$Feature, levels = ordering)
+    plot_data = plot_data %>% arrange(Feature)
+
+    pdf(file.path(plot_path, paste0(target,'.annotated.pdf')))
+    p = ggplot(plot_data, aes(x = Regions, y = value, fill = Feature)) + geom_bar(stat="identity")
+    p = p + scale_fill_brewer(palette = "Set2")
+    p = p + theme_classic() + theme(legend.position= "right", aspect.ratio = 1)
+    p = p + theme(axis.text.x = element_text(angle = 25, hjust = 1))
+    p
+
+    ordering = c('2000-gene_start-500', 'gene_body', 'intergenic', 'poised_enhancers', 'active_enhancers')
+    plot_data$Feature = factor(plot_data$Feature, levels = ordering)
+    p %+% 
+    dev.off()
+
+    write.table((as.data.frame(t(anno)) %>% add_rownames(var='Regions') %>% mutate(File = args$bed)),
+                file.path(output_path, paste0(target,'.annotated.tsv')),
+                quote = FALSE, row.names=F, sep="\t")
+}# }}}
 # }}}
 
 library(rtracklayer)
-library(rtracklayer)
+library(dplyr)
 library(ggplot2)
 
 pattern = paste0(file_path_sans_ext(args$gtf), '.rtracklayer-')
@@ -136,7 +161,11 @@ if(file_ext(args$bed) != "bed") {
     if(file_ext(args$bed) == "narrowPeak") {
         regions = import_narrowPeak(args$bed)
     } else if (file_ext(args$bed) == "broadPeak"){
+        target = paste0(target, '.broad-')
         regions = import_broadPeak(args$bed)
+    } else if (file_ext(args$bed) == "gappedPeak"){
+        target = paste0(target, '.gapped-')
+        g(regions, blocks) %=% import_gappedPeak(args$bed)
     }
 } else {
     regions = import.bed(args$bed)
@@ -151,25 +180,12 @@ if(is(subsets, "list")) {
 } else {
     anno = annotate(subsets, annotations, output_path, target)
 }
+plot_annotation(anno, target)
 
-plot_data = as.data.frame(t(anno)) %>% add_rownames(var='Regions')
-plot_data = reshape2::melt(plot_data) %>% rename(Feature = variable)
-
-ordering = c('2000-tss-500','intergenic', 'first-exon', 'exons', 'first-intron', 'introns','active_enhancers', 'poised_enhancers')
-plot_data$Feature = factor(plot_data$Feature, levels = ordering)
-plot_data = plot_data %>% arrange(Feature)
-
-pdf(file.path(plot_path, paste0(target,'.annotated.pdf')))
-p = ggplot(plot_data, aes(x = Regions, y = value, fill = Feature)) + geom_bar(stat="identity")
-p = p + scale_fill_brewer(palette = "Paired")
-p = p + theme_classic()
-p = p + theme(axis.text.x = element_text(angle = 25, hjust = 1))
-p
-dev.off()
-
-write.table((as.data.frame(t(anno)) %>% add_rownames(var='Regions') %>% mutate(File = args$bed)),
-            file.path(output_path, paste0(target,'.annotated.tsv')),
-            quote = FALSE, row.names=F, sep="\t")
+# if the file provided is gapped then no subsets provided and the name is the block name
+target = paste0(target, 'blocks-')
+blocks_anno = annotate(blocks, annotations, output_path, target)
+plot_annotation(blocks_anno, target)
 
 # one I did for the TAC
 # write.table(plot_data, '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/plots/NuRD-annotations.tsv', quote=FALSE, row.names=F, sep="\t")
