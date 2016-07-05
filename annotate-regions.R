@@ -24,7 +24,7 @@ parser$add_argument('-o', '--out', metavar= "path", type= "character",
 
 args = parser$parse_args()
 
-output_path = file.path(args$out, 'feature-annotation')
+output_path = file.path(args$out, 'feature-annotation', basename(file_path_sans_ext(args$gtf)))
 plot_path = file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 
@@ -32,6 +32,9 @@ target = file_path_sans_ext(basename(args$bed))
 # }}}
 
 # Functions# {{{
+library(rtracklayer)
+library(dplyr)
+library(ggplot2)
 
 get_subsets = function(grange){# {{{
     sets = levels(factor(grange$name))
@@ -124,20 +127,17 @@ plot_annotation  = function(anno, target){
     p = p + theme(axis.text.x = element_text(angle = 25, hjust = 1))
     p
 
-    ordering = c('2000-gene_start-500', 'gene_body', 'intergenic', 'poised_enhancers', 'active_enhancers')
-    plot_data$Feature = factor(plot_data$Feature, levels = ordering)
-    p %+% 
     dev.off()
 
-    write.table((as.data.frame(t(anno)) %>% add_rownames(var='Regions') %>% mutate(File = args$bed)),
+    write.table(
+                (as.data.frame(t(anno)) %>% add_rownames(var='Regions') %>%
+                 dplyr::mutate(File = args$bed,
+                        Active_enhancers = as.character(args$active_enhancers),
+                        Poised_enhancers = as.character(args$poised_enhancers))),
                 file.path(output_path, paste0(target,'.annotated.tsv')),
                 quote = FALSE, row.names=F, sep="\t")
 }# }}}
 # }}}
-
-library(rtracklayer)
-library(dplyr)
-library(ggplot2)
 
 pattern = paste0(file_path_sans_ext(args$gtf), '.rtracklayer-')
 rtracklayer_output = c('5000-tss-2000', '2000-tss-500',
