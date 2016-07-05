@@ -268,7 +268,6 @@ intersect_multi = function(grl){# {{{
     return(gr)
 }# }}}
 
-
 get_hits_scores = function(query, subj, value) {# {{{
     # List of packages to load
     x = c('GenomicRanges')
@@ -287,16 +286,21 @@ import_broadPeak = function(broad){# {{{
     lapply(x, suppressMessages(library), character.only=T)
     
     if (grepl('track', readLines(broad, n=1))){
+        to_skip = as.numeric(system(paste0("awk '/track/ {print NR}' <", broad), intern = T))
+        # check if vector is sequential and increasing!
+        if(! all(diff(to_skip) == 1)) stop("File contains more than one track line. Lines not sequential so don't know how to skip them. Inspect the file. ")
+
         # File contains track line for ucsc which we skip
-        df = read.table(broad, header=F, skip=1)
+        df = read.table(broad, header=F, skip=last(to_skip))
     } else {
         # contains both the broad region and narrow peak
         df = read.table(broad, header=F)
     }
     
     names(df) = c('chr', 'start', 'end', 'name', 'score', 'strand', 'fe', 'pvalue', 'qvalue')
-    with(df %>% dplyr::select(chr, start, end, strand, qvalue, fe) %>% mutate(strand=gsub('.', '*', strand)),
-         GRanges(chr, IRanges(start,end), strand, qvalue=qvalue, fe=fe))
+
+    with(df %>% dplyr::select(chr, start, end, strand, qvalue, fe) %>% mutate(strand = gsub('.', '*', strand)),
+         GRanges(chr, IRanges(start,end), strand, qvalue = qvalue, fe = fe))
 }
 # }}}
 
@@ -305,15 +309,36 @@ import_gappedPeak = function(gapped){# {{{
     lapply(x, suppressMessages(library), character.only=T)
     
     if (grepl('track', readLines(gapped, n=1))){
+        to_skip = as.numeric(system(paste0("awk '/track/ {print NR}' <", gapped), intern = T))
+        # check if vector is sequential and increasing!
+        if(! all(diff(to_skip) == 1)) stop("File contains more than one track line. Lines not sequential so don't know how to skip them. Inspect the file. ")
+
         # File contains track line for ucsc which we skip
-        df = read.table(gapped, header=F, skip=1)
+        df = read.table(gapped, header=F, skip=last(to_skip))
     } else {
         df = read.table(gapped, header=F)
     }
     
     names(df) = c('chr', 'start', 'end', 'name', 'score', 'strand', 'narrow_start', 'narrow_end', 'rgb_col', 'blocks', 'block_length', 'block_start', 'fe', 'pvalue', 'qvalue')
-    with(df %>% dplyr::select(chr, start, end, strand, qvalue, fe) %>% mutate(strand=gsub('.', '*', strand)),
+    
+    block_lengths = lapply(strsplit(as.character(df$block_length), ','), as.numeric)
+    block_starts = lapply(strsplit(as.character(df$block_start), ','), as.numeric)
+    blocks = lapply(1:length(block_starts)[1:5], function(x){
+                        block_start = df[x, 'start'] + block_starts[[x]]
+                        block_end = block_start + block_lengths[[x]]
+                        tmp_df = data.frame(chr = rep(df[x, 'chr'], length(block_lengths[[x]])),
+                                            start = block_start,
+                                            end = block_end, 
+                                            name = paste0(df[x, 'name'], paste0('_block_',
+                                                                                letters[1:length(block_lengths[[x]])]))
+                                            )}) %>%
+    dplyr::bind_rows()
+    blocks = with(blocks, GRanges(chr, IRanges(start, end), strand = '*', name = name))
+
+    gapped = with(df %>% dplyr::select(chr, start, end, strand, qvalue, fe) %>% mutate(strand=gsub('.', '*', strand)),
          GRanges(chr, IRanges(start,end), strand, qvalue=qvalue, fe=fe))
+
+    return(list(gapped = gapped, blocks = blocks))
 }
 # }}}
 
@@ -322,8 +347,12 @@ import_narrowPeak = function(narrow) {# {{{
     lapply(x, suppressMessages(library), character.only=T)
     
     if (grepl('track', readLines(narrow, n=1))){
+        to_skip = as.numeric(system(paste0("awk '/track/ {print NR}' <", narrow), intern = T))
+        # check if vector is sequential and increasing!
+        if(! all(diff(to_skip) == 1)) stop("File contains more than one track line. Lines not sequential so don't know how to skip them. Inspect the file. ")
+
         # File contains track line for ucsc which we skip
-        df = read.table(narrow, header=F, skip=1)
+        df = read.table(narrow, header=F, skip=last(to_skip))
     } else {
         df = read.table(narrow, header=F)
     }
