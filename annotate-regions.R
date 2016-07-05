@@ -182,10 +182,12 @@ if(is(subsets, "list")) {
 }
 plot_annotation(anno, target)
 
-# if the file provided is gapped then no subsets provided and the name is the block name
-target = paste0(target, 'blocks-')
-blocks_anno = annotate(blocks, annotations, output_path, target)
-plot_annotation(blocks_anno, target)
+if(file_ext(args$bed) == "gappedPeak"){
+    # if the file provided is gapped then no subsets provided and the name is the block name
+    target = paste0(target, 'blocks-')
+    blocks_anno = annotate(blocks, annotations, output_path, target)
+    plot_annotation(blocks_anno, target)
+}
 
 # one I did for the TAC
 # write.table(plot_data, '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/plots/NuRD-annotations.tsv', quote=FALSE, row.names=F, sep="\t")
