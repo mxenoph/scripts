@@ -12,8 +12,8 @@ import os, sys, argparse, re
 from time import gmtime, strftime
 import gffutils
 import pybedtools
-#import metaseq
-#from pylab import *
+import metaseq
+from pylab import *
 from pybedtools.featurefuncs import TSS
 from pybedtools.featurefuncs import less_than
 from pybedtools.featurefuncs import greater_than
@@ -135,8 +135,8 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
     # multiprocessing.cpu_count() gives the allocated number of cores, so if used with LSF this will 
     # return the number of cores on the host -- not good practice
     # processes = multiprocessing.cpu_count()
-    #processes = int(os.environ["LSB_DJOB_NUMPROC"])
-    processes = int(2)
+    processes = int(os.environ["LSB_DJOB_NUMPROC"])
+    #processes = int(2)
     print 'Counting tags...'
 
     if bw is not None:
@@ -148,7 +148,6 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
     basename = basename + '.' + description
     output = basename + '.npz'
     print 'Output: %s' % output
-    return()
     
     # Calculate number of bins depending on feature# {{{
     pattern = re.compile('(\d+)-(\w+)-(\d+)')
@@ -180,7 +179,7 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
         if bw is not None:
             bw = metaseq.genomic_signal(bw, 'bigwig')
             print "Building array based on provided bigwig file for %s using %s processors" % (basename, processes)
-            bw_array = bw.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
+            bw_array = bw.array(features, bins = bins, processes = processes)
             persistence.save_features_and_arrays(
                     features = features,
                     arrays={'bw': bw_array},
@@ -195,13 +194,14 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
             
             # Create arrays in parallel
             print "Building the IP array for %s using %s processors" % (basename, processes)
-            ip_array = ip.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
+            ip_array = ip.array(features, bins = bins, processes = processes, shift_width = int(args.fs)/2)
             print "Building the input array for %s using %s processors" % (basename, processes)
-            ctrl_array = ctrl.array(features, bins = bins, processes = 1, shift_width = int(args.fs)/2)
+            ctrl_array = ctrl.array(features, bins = bins, processes = processes, shift_width = int(args.fs)/2)
             
             # Normalize to library size
             ip_array /= ip.mapped_read_count() / 1e6
             ctrl_array /= ctrl.mapped_read_count() / 1e6
+            # RPKM would be ip_array /= ip.mapped_read_count() / 1e6 => ip_array *= binsize
 
             # Cache to disk (will be saved as "example.npz" and "example.features")
             persistence.save_features_and_arrays(
@@ -254,24 +254,24 @@ def create_features():
     else:
         gene_start = pybedtools.BedTool(filename)
     
-    filename = gff_filename.replace('.gtf', '.metaseq.5000-gene_start.gtf')
+    filename = gff_filename.replace('.gtf', '.metaseq.2000-gene_start.gtf')
     if not os.path.exists(filename) or os.stat(filename).st_size == 0:
         print 'Creating ' + filename + ' ...'
         print "Creating upstream region of gene start: %s " % filename
-        upstream = genes.flank(genome=args.assembly, s=True, r=0, l=5000).saveas(filename)
+        upstream = genes.flank(genome=args.assembly, s=True, r=0, l=2000).saveas(filename)
     else:
         upstream = pybedtools.BedTool(filename)
     
-    filename = gff_filename.replace('.gtf', '.metaseq.gene_end-5000.gtf')
+    filename = gff_filename.replace('.gtf', '.metaseq.gene_end-500.gtf')
     if not os.path.exists(filename) or os.stat(filename).st_size == 0:
         print "Creating downstream region of gene end: %s " % filename
-        downstream = genes.flank(genome=args.assembly, s=True, l=0, r=5000).saveas(filename)
+        downstream = genes.flank(genome=args.assembly, s=True, l=0, r=500).saveas(filename)
     else:
         downstream = pybedtools.BedTool(filename)
    
     # upstream.filter(greater_than, 4999) return a subset of the bedtool object (only features of length bigger than 4999 are included)
-    upstream_filtered = [ g.name for g in upstream.filter(greater_than, 4999) ]
-    downstream_filtered = [ g.name for g in downstream.filter(greater_than, 4999) ]
+    upstream_filtered = [ g.name for g in upstream.filter(greater_than, 1999) ]
+    downstream_filtered = [ g.name for g in downstream.filter(greater_than, 499) ]
     print "Genes: %s Pass filter, upstream: %s downstream: %s" % (len(genes), len(upstream_filtered), len(downstream_filtered))
 
     tmp = [g.name for g in genes if g.name not in upstream_filtered]
@@ -290,17 +290,17 @@ def create_features():
         if cmp_version(pybedtools.__version__, '0.6.9') <= 0:
             correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
 
-        filtered_upstream = upstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
+        filtered_upstream = upstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.2000-gene_start.filtered.gtf'))
         if cmp_version(pybedtools.__version__, '0.6.9') <= 0:
-            correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
+            correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.2000-gene_start.filtered.gtf'))
 
-        filtered_downstream = downstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
+        filtered_downstream = downstream.filter(lambda gene: gene.name not in tmp).saveas(gff_filename.replace('.gtf', '.metaseq.gene_end-500.filtered.gtf'))
         if cmp_version(pybedtools.__version__, '0.6.9') <= 0:
-            correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
+            correct_bedtools_output(gff_filename.replace('.gtf', '.metaseq.gene_end-500.filtered.gtf'))
     else:
         filtered_genes = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.genes.filtered.gtf'))
-        filtered_upstream = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.5000-gene_start.filtered.gtf'))
-        filtered_downstream = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.gene_end-5000.filtered.gtf'))
+        filtered_upstream = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.2000-gene_start.filtered.gtf'))
+        filtered_downstream = pybedtools.BedTool(gff_filename.replace('.gtf', '.metaseq.gene_end-500.filtered.gtf'))
         
     return {'tss':tss, 'gene_start':gene_start, 'genes':genes, 'genes-filtered':filtered_genes, 'upstream-filtered':filtered_upstream, 'downstream-filtered':filtered_downstream}
 # }}}
@@ -311,14 +311,20 @@ def create_features():
 def main():
 
     print 'Calling create_features() ...'
-    #features = create_features()
-    features = pybedtools.BedTool(args.gtf)
+    features = create_features()
+    descriptions = {'gene_start': str(args.upstream) + '-gene_start-' + str(args.downstream),
+                    'tss': str(args.upstream) + '-tss-' + str(args.downstream),
+                    'genes':'genes',
+                    'genes-filtered':'genes-filtered', 
+                    'upstream-filtered': '2000-gene_start', 
+                    'downstream-filtered':'gene_end-500'}
 
     # Create genomic_signal objects that point to data files
     for i in range(len(args.ip)):
 
         if args.bigwig:
-            count_tags(bw = args.ip[i], features = features, description = 'gene_filtered')
+            for key, value in descriptions.iteritems():
+                count_tags(bw = args.ip[i], features = features[key], description = value)
         else:
             if len(args.ip) == len(args.ctrl):
                 bams = {'ip':args.ip[i], 'ctrl':args.ctrl[i]}
@@ -331,24 +337,10 @@ def main():
             else:
                 print 'Different number of IP and input BAM bams provided. I do not know how these experiments are associated.'
 
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['gene_start'], description = str(args.upstream) + '-gene_start-' + str(args.downstream))
-#
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['tss'], description = str(args.upstream) + '-tss-' + str(args.downstream))
-#
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['genes'], description = 'genes' )
-#       
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['genes-filtered'], description = 'genes-filtered' )
-#
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['upstream-filtered'], description = '5000-gene_start' )
-#       
-#        count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
-#                features = features['downstream-filtered'], description = 'gene_end-5000' )
-#        
+            for key, value in descriptions.iteritems():
+                count_tags(ip = bams['ip'], ctrl = bams['ctrl'],\
+                        features = features[key], description = value)
+
         if not args.regions:
             print 'Regions not provided'
         else:
