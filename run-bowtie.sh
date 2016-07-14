@@ -67,7 +67,7 @@ fi
 fastqc_report=${FASTQC}/$(basename ${fastq/.f*/_fastqc})
 if [ -e "${fastqc_report}/fastqc_data.txt" ]
 then
-    encoding=$(awk -F '\t' '$0 ~ /^Encoding/ {if($2 ~ /Sanger/) {print "--phred33-quals"; exit } else{"--phred64-quals"; exit} }' ${fastqc_report}/fastqc_data.txt)
+    encoding=$(awk -F '\t' '$0 ~ /^Encoding/ {if($2 ~ /Sanger/) {print "--phred33-quals"; exit } else if($2 ~ /Illumina 1.5/) {print "--phred64-quals"; exit} }' ${fastqc_report}/fastqc_data.txt)
 else
     # most new data are PHRED+33 so use it as default but check if mapping crashes
     encoding="--phred33-quals"
