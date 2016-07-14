@@ -89,7 +89,7 @@ samtools view -bS ${OUT}${describer}.sam -o ${OUT}${describer}.uns.bam
 #echo -e `date +"%D%t%T"` "\t" "samtools view -bS ${OUT}${describer}.sam -o ${OUT}${describer}.uns.bam" >> ${OUT}FilesTree.log
 
 # Sort BAM
-samtools sort ${OUT}${describer}.uns.bam ${OUT}${describer}
+samtools sort ${OUT}${describer}.uns.bam -o ${OUT}${describer}.bam
 #echo -e `date +"%D%t%T"` "\t" "samtools sort ${OUT}${describer}.uns.bam ${OUT}${describer}.sort" >> ${OUT}FilesTree.log
 
 # Sort BAM
