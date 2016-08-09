@@ -5,7 +5,6 @@
 library = function (...) suppressMessages(base::library(...))
 library(argparse)
 library(tools)
-source("/homes/mxenoph/source/Rscripts/granges-functions.R")
 
 parser =  ArgumentParser(description="Get exons, introns, intergenic for given annotation")
 parser$add_argument('-G', '--gtf', metavar= "file", required='True', type= "character", help= "GTF file")
@@ -22,11 +21,6 @@ ncores = args$threads
 get_filtered_features = function(filters, values, archive = NULL, organism = NULL, output = NULL){ # {{{
 
     # Load packages# {{{
-    library(GenomicFeatures)
-    library(GenomicRanges)
-    library(rtracklayer)
-    library(parallel)
-    library(BiocParallel)
     library(stringr)
     # }}}
 
@@ -50,7 +44,7 @@ get_filtered_features = function(filters, values, archive = NULL, organism = NUL
     filtered_features = filtered_features %>% dplyr::filter(str_detect(description, coll(args$filter, ignore_case = T)))
     
     write.table(filtered_features, output, sep="\t", quote=FALSE, col.names=T, row.names=F)
-    print('Returning requested genes')
+    cat("Returning requested genes \n")
     return(filtered_features)
 }
 # }}}
@@ -59,6 +53,7 @@ main = function(){# {{{
     library(rvest)
     library(dplyr)
     library(tidyr)
+    library(biomaRt)
     
     doc_text = read_html(args$etable) %>% html_nodes('th') %>% html_text()
     ensembl_versions = do.call(rbind, (strsplit(doc_text[grepl("\\d+", doc_text, perl=TRUE)], ' ' )))
@@ -86,7 +81,6 @@ main = function(){# {{{
                         dplyr::select(-suffix_1, -suffix_2)
     
     target = gsub(".gtf", "", args$gtf)
-
     dictionary = list('histone' = list(filters = c("pfam"), values  = c("PF00125", "PF00538")))
 
     if(any(grepl(args$filter, names(dictionary)))){
