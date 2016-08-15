@@ -22,6 +22,7 @@ parser$add_argument('-t', '--targets', metavar= "file", type= "character", defau
                     default = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/from_meryem/feature-annotation/Condition_7E12_2i_Proteins_M2_meryem_filtered_AND_Chd4_meryem_filtered_Ov1bp.binding-per-gene.tsv',
                     help= "TSV files containing targets for annotating fold changes")
 parser$add_argument('p', '--pattern', type = "character", default = NULL, help = "Pattern used to exclude samples from calculating fold change")
+parser$add_argument('--group_by', type = "character", default = 'group', help = "Column name by which to group for subsets")
 parser$add_argument('-u', '--upstream', metavar= "file", required='True',
                     default = 250, help= "Upstream of promoter")
 parser$add_argument('-d', '--downstream', metavar= "file", required='True',
@@ -38,7 +39,8 @@ if(FALSE){
     args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bowtie/coverage/ddup/"
     args$out = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10"
     args$gtf = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.rtracklayer-genes.gtf"
-    args$subsets = "/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/inducible/deseq/*_de.tsv"
+    args$subsets = "/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/inducible/results/expression-fc-consistent-significance-all-comparisons.tsv"
+    args$group_by = 'regulated'
     args$targets = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/from_meryem/feature-annotation/Condition_7E12_2i_Proteins_M2_meryem_filtered_AND_Chd4_meryem_filtered_Ov1bp.binding-per-gene.tsv"
     args$pattern = "h24-S5P_1"
 }# }}}
@@ -315,6 +317,7 @@ get_ks_dist = function(first_dist, second_dist) {# {{{
 }# }}}
 
 test_significance_t = function(df, combination){# {{{
+    library(stats)
     # unless the deviation from normality is really obvious uou shouldn't worry
     # about using the t-test
    stats =  apply(combination, 2, function(x){
@@ -322,7 +325,7 @@ test_significance_t = function(df, combination){# {{{
 
                       if(length(levels(distributions$variable)) == 2){
                           effect_size = seq(0.1, 1, 0.2)
-                          power_estimation = pwr.t.test(n = nrow(distributions), d = effect_size,
+                          power_estimation = power.t.test(n = nrow(distributions), d = effect_size,
                                                         sig.level = c(0.05), type = "paired")
                           power_estimation = data.frame(effect = effect_size,
                                                        power = power_estimation$power,
@@ -350,6 +353,40 @@ test_significance_t = function(df, combination){# {{{
     return(stats)
 }# }}}
 
+# ggplot extrapolated when computing the ecdf (stat_ecdf(pad = F) does not work).# {{{
+# Temporary fix from https://github.com/hadley/ggplot2/issues/1467
+stat_myecdf = function(mapping = NULL, data = NULL, geom = "step",
+                        position = "identity", n = NULL, na.rm = FALSE,
+                        show.legend = NA, inherit.aes = TRUE, direction="vh", ...) {
+    layer(data = data,
+          mapping = mapping,
+          stat = StatMyecdf,
+          geom = geom,
+          position = position,
+          show.legend = show.legend,
+          inherit.aes = inherit.aes,
+          params = list(n = n,
+                        na.rm = na.rm,
+                        direction=direction, ...))
+}
+
+StatMyecdf = ggproto("StatMyecdf", Stat,
+                     compute_group = function(data, scales, n = NULL) {
+                         # If n is NULL, use raw values; otherwise interpolate
+                         if (is.null(n)) {
+                             # Dont understand why but this version needs to sort the values
+                             xvals = sort(unique(data$x))
+                         } else {
+                             xvals = seq(min(data$x), max(data$x), length.out = n)
+                         }
+                         y = ecdf(data$x)(xvals)
+                         x1 = max(xvals)
+                         y0 = 0
+                         data.frame(x = c(xvals, x1), y = c(y0, y))
+                     },
+                     default_aes = aes(y = ..y..),
+                     required_aes = c("x"))# }}}
+
 # Plotting density# {{{
 plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', metric = 'Travelling Ratio', combination = NULL){
     library(ggplot2)
@@ -371,40 +408,6 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
         return_list$n_valid = n_valid
         return(return_list)
     }# }}}
-
-    # ggplot extrapolated when computing the ecdf (stat_ecdf(pad = F) does not work).# {{{
-    # Temporary fix from https://github.com/hadley/ggplot2/issues/1467
-    stat_myecdf = function(mapping = NULL, data = NULL, geom = "step",
-                            position = "identity", n = NULL, na.rm = FALSE,
-                            show.legend = NA, inherit.aes = TRUE, direction="vh", ...) {
-        layer(data = data,
-              mapping = mapping,
-              stat = StatMyecdf,
-              geom = geom,
-              position = position,
-              show.legend = show.legend,
-              inherit.aes = inherit.aes,
-              params = list(n = n,
-                            na.rm = na.rm,
-                            direction=direction, ...))
-    }
-
-    StatMyecdf = ggproto("StatMyecdf", Stat,
-                         compute_group = function(data, scales, n = NULL) {
-                             # If n is NULL, use raw values; otherwise interpolate
-                             if (is.null(n)) {
-                                 # Dont understand why but this version needs to sort the values
-                                 xvals = sort(unique(data$x))
-                             } else {
-                                 xvals = seq(min(data$x), max(data$x), length.out = n)
-                             }
-                             y = ecdf(data$x)(xvals)
-                             x1 = max(xvals)
-                             y0 = 0
-                             data.frame(x = c(xvals, x1), y = c(y0, y))
-                         },
-                         default_aes = aes(y = ..y..),
-                         required_aes = c("x"))# }}}
 
     return_list = list()
     if(! 'gene_id' %in% colnames(pausing)){
@@ -485,8 +488,10 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
 
     # Density plots# {{{
     # density = counts / sum(counts * bar width
-    pdens = p + geom_line(stat = "density", aes_string(x = 'value', color = fill, linetype = aesthetics_linetype))
-    pdens = pdens + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill)
+    # http://stackoverflow.com/questions/15664202/how-to-interpret-the-different-ggplot2-densities
+#    pdens = p + geom_line(stat = "density", aes_string(x = 'value', color = fill, linetype = aesthetics_linetype))
+    pdens = p + geom_line(stat = "density", aes_string(x = 'value', y= '..scaled..',  color = fill, linetype = aesthetics_linetype))
+    pdens = pdens + eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill, y = 'Scaled density')
 
     # Getting the ggplot range for y axis
     from_y_limit = ggplot_build(pdens)$panel$ranges[[1]]$y.range[2]
@@ -496,7 +501,8 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
     tmp = paste0("`", tmp, "`")
     pdens = pdens + annotate("text",
                                   x = 0,
-                                  y = seq(from = from_y_limit, to = to_y_limit, length.out = nrow(annotations)),
+#                                  y = seq(from = from_y_limit, to = to_y_limit, length.out = nrow(annotations)),
+                                  y = seq(from = 1, to = 0, by = -0.05)[1:nrow(annotations)],
                                   # left justified
                                   hjust = 0, parse = TRUE,
                                   label = paste("n[", eval(tmp), "] == ", annotations$number))
@@ -534,7 +540,7 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                                                            # left justified
                                                            hjust = 0,
                                                            label = paste0(tmp$method, " (", tmp$alternative, ")\n",
-                                                                          "FDR = ", round(tmp$FDR, 3), "\n"))#,
+                                                                          "FDR = ", tmp$FDR, "\n"))#,
                                                                          # "p-value = ", round(tmp$pvalue, 3), "\n"))
                       return_list$stats = stats
                   } else {
@@ -545,50 +551,53 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
 
     # Subsets # {{{
     if (!is.null(subsets)){
-        pausing_subset = pausing %>% inner_join(subsets, by = "gene_id") %>% droplevels()
+        pausing_subset = pausing %>% left_join(subsets, by = "gene_id") %>% droplevels()
+        if(all(c('up', 'down') %in% levels(pausing_subset$Group))){
+            x = 'unchanged'
+        } else {
+            x = 'Not in groups'
+        }
+        pausing_subset = pausing_subset %>% 
+            mutate(Group = ifelse(is.na(as.character(Group)), x, as.character(Group)))
         g(n_valid_subset, pausing_subset, n_valid) %=% get_valid_n(pausing_subset)
 
         pausing_subset = pausing_subset %>% 
-            mutate(Sample = plyr::mapvalues(variable, from = levels(variable), to = 1:length(levels(variable)))) %>% 
+            mutate(Sample = as.numeric(plyr::mapvalues(variable, from = levels(variable), to = 1:length(levels(variable)))) + 0.35) %>% 
             select(-one_of('gene_id', 'gene_name', 'value')) %>% unique() %>%
             inner_join(n_valid_subset, by = c('variable', 'Group')) %>%
-            mutate(x = as.numeric(Sample) + 0.35) %>%
-            right_join(pausing_subset, by = c(unique(c(fill, 'variable')), 'Group'))
+            right_join(pausing_subset, by = c(unique(c(fill, 'variable')), 'Group')) #%>%
+            # causes the regex in test_significance_t() to return empty
+            # mutate(x = as.numeric(Sample) + 0.35)
 
-        plot_per_group = pausing_subset %>% group_by(Group) %>%# {{{
+        plots_per_group = pausing_subset %>% group_by(Group) %>%# {{{
             # To access the data `do` needs to be used with gggplot(data = .) and not p + %+% .
             # This is important for adding the annotation
             do(plots = ggplot(data = .) +
                geom_boxplot(aes_string(x = 'variable', y = 'value', colour = fill), notch = FALSE, varwidth = TRUE) +
                eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) +
 
-               annotate("text", y = 0, x = unique(.$x),
+               annotate("text", y = 0, x = unique(.$Sample),
                         label = paste0("n = ",
                                        data.frame(a = .$variable, b = .$number) %>% unique() %>% .[['b']]),
                         hjust = 0) + 
-               labs(title = paste(label, subset_name, sep=''),
-                    subtitle = unique(.$Group), 
+               labs(title = label,
+                    subtitle = paste0(unique(.$Group), ' (', subset_name, ')'),
                     y = metric, 
                     x = '', 
                     colour = fill) + coord_flip() +
                theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
                 )# }}}
 
+        write.table((pausing_subset %>% select(gene_id, Group) %>% unique()),
+                    file.path(output_path, paste0(filename, 'valid-in-subset.tsv')),
+                    quote = FALSE, row.names = FALSE, sep = "\t")
         lapply(plots_per_group$plots, plot)
-        
-        summary_plot = pausing_subset %>% ggplot(data = .) +
-               geom_boxplot(aes_string(x = 'Group', y = 'value', colour = fill), notch = FALSE, varwidth = FALSE) +
-               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) +
-               labs(title = paste(label, subset_name, sep=''),
-                    subtitle = 'test', 
-                    y = metric, 
-                    x = '') + coord_flip() +
-               theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
-           
-        preview(plot(summary_plot))
 
         if(!is.null(combination)){
-            stats = test_significance_t(pausing_subset, combination)
+            stats = apply((pausing_subset %>% group_by(Group) %>% do(df = test_significance_t(., combination))), 1,
+                   function(x) mutate(x$df, Group = x$Group) ) %>% #%>% mutate(FDR = round(FDR, 4))) %>% 
+            bind_rows()
+
             if(is(stats, 'data.frame')) {
                 filename = gsub(' ', '_', label)
                 if(filename != '') filename = paste0(filename, '.')
@@ -596,16 +605,80 @@ plot_density = function(pausing, subsets = NULL, subset_name = '', label = '', m
                 write.table(stats, file.path(output_path, paste0(filename, 'paired-t-test.tsv')),
                             quote = FALSE, row.names = FALSE, sep = "\t")
             }
-            apply(combination, 2, function(x){
-                      pairwise_comp = pausing_subset %>% 
-                          filter(str_detect(variable,
-                                            paste0("^", x[1], "\\-{0,1}[^\\.]*$")) | str_detect(variable,
-                                            paste0("^", x[2], "\\-{0,1}[^\\.]*$"))) %>% droplevels()
-                      pcumulative = pcumulative %+% pairwise_comp
-            plot(pcumulative)
-            return(x)})
         }
-    }# }}}
+
+        pdens_per_group = pausing_subset %>% group_by(Group) %>%# {{{
+            # To access the data `do` needs to be used with gggplot(data = .) and not p + %+% .
+            # This is important for adding the annotation
+            do(plots = ggplot(data = .) +
+               geom_line(stat = "density", aes_string(x = 'value', y = '..scaled..',  color = fill, linetype = aesthetics_linetype)) +
+               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill) +
+               annotate("text", x = 0,
+                        # this are defined based on all the genes so it might complain if limits for the subset are
+                        # different but I don't know how to access the plot limits from the dataframe do() returns
+                        # or how to have more than one command in do()
+                        #y = seq(from = 1, to = 0, by = -0.05)[1:10],
+                        y = seq(from = 1, to = 0,
+                                by = -0.05)[1:(length(unique(.$Sample)) + choose(length(unique(.$Sample)), 2))],
+                        label = c(paste0("n",
+                                       data.frame(a = .$variable, b = .$number,
+                                                  c = paste('[',  paste0('`', .$variable, '`'), '] == ', .$number)) %>%
+                                                  unique() %>% .[['c']]),
+                                   paste0('FDR[`', apply(stats[stats$Group == unique(.$Group),
+                                                         c('comparison', 'FDR')], 1, paste, collapse='`] == '))
+                                  ),
+                        hjust = 0, parse = TRUE) + 
+               labs(title = label,
+                    subtitle = paste0(unique(.$Group), ' (', subset_name, ')'),
+                    x = metric, 
+                    y = 'Scaled density',
+                    colour = fill) +
+               theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
+                )# }}}
+
+        lapply(pdens_per_group$plots, plot)
+
+        pdens_per_group = pausing_subset %>% group_by(Group) %>%# {{{
+            # To access the data `do` needs to be used with gggplot(data = .) and not p + %+% .
+            # This is important for adding the annotation
+            do(plots = ggplot(data = .) +
+               geom_line(stat = "density", aes_string(x = 'value', y = '..scaled..',  color = fill, linetype = aesthetics_linetype)) +
+               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) + labs(colour = fill) +
+               annotate("text", x = 0,
+                        # this are defined based on all the genes so it might complain if limits for the subset are
+                        # different but I don't know how to access the plot limits from the dataframe do() returns
+                        # or how to have more than one command in do()
+                        #y = seq(from = 1, to = 0, by = -0.05)[1:10],
+                        y = seq(from = 1, to = 0,
+                                by = -0.05)[1:length(unique(.$Sample))],
+                        label = paste0("n",
+                                       data.frame(a = .$variable, b = .$number,
+                                                  c = paste('[',  paste0('`', .$variable, '`'), '] == ', .$number)) %>%
+                                                  unique() %>% .[['c']]),
+                        hjust = 0, parse = TRUE) + 
+               labs(title = label,
+                    subtitle = paste0(unique(.$Group), ' (', subset_name, ')'),
+                    x = metric, 
+                    y = 'Scaled density',
+                    colour = fill) +
+               theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
+                )# }}}
+
+        # Without FDR
+        lapply(pdens_per_group$plots, plot)
+
+        summary_plot = pausing_subset %>% ggplot(data = .) +
+               geom_boxplot(aes_string(x = 'Group', y = 'value', colour = fill), notch = FALSE, varwidth = FALSE) +
+               eval(parse(text = paste(fcol, '(', fparam, '=cols', ')'))) +
+               labs(title = label,
+                    subtitle = subset_name,
+                    y = metric, 
+                    x = '') + coord_flip() +
+               theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
+           
+        plot(summary_plot)
+
+   }# }}}
 
 }# }}}
 
@@ -627,20 +700,21 @@ check_normality = function(x, id = ''){
     # for finding distribution of the data
     library(fitdistrplus)
     library(gridExtra)
-    # Remove NA values as descdist complains - affects the qq-lot but how exactly
+    # Remove NA values as descdist complains - affects the qq-plot but how exactly
     if(any(is.na(x))) warning(sprintf("NA values not allowed, removing %s. Interpret results with caution",
                                       table(is.na(x))[['TRUE']]))
 
     x = x[!is.na(x)]
-    gstats = apply(t(bind_cols(as.data.frame(t(as.matrix(test))),
+    gstats = apply(t(bind_cols(as.data.frame(t(as.matrix(summary(x)))),
                        data.frame(sd = sd(x),
-                                  # type = 2 refers to wquation used to compute kurtosis, only type 2 is 
+                                  # type = 2 refers to equation used to compute kurtosis, only type 2 is 
                                   # unbiased under normality
                                   kurtosis = kurtosis(x, type = 2),
                                   skewness = skewness(x, type = 2),
                                   cv = cv(x)))), 
                    2, round, 2)
 
+    # plotting cullen and frey graph
     descdist(x, discrete = FALSE)
     # Plotting histogram, qqplot, pp-plot and ecdf
     check_against = c("norm", "lnorm", "pois", "exp", "gamma",
@@ -676,9 +750,9 @@ calculate_pausing_index = function(){
 main(){
     library(dplyr)
     library(tidyr)
+    select = function (...) dplyr::select(...)
     # for extracting pattern from string with str_extract
     library(stringr)
-    library(rtracklayer)
     library(gridExtra)
     library(ggplot2)
 
@@ -686,8 +760,6 @@ main(){
     travelling_ratio = calculate_travelling_ratio_meryem(files)
     write.table(travelling_ratio,
                 file = file.path(output_path, 'travelling-ratios-unfiltered.tsv'), quote = F, row.names = F, sep ="\t")
-    write.table((fc_annotated %>% select(-annotation_files)),
-                file = file.path(output_path, 'travelling-ratios-fc-annotated.tsv'), quote = F, row.names = F, sep ="\t")
 
     g(per_condition_tr, fc, conditions) %=% calculate_fc(travelling_ratio)
     write.table(per_condition_tr,
@@ -775,12 +847,38 @@ main(){
     plot_density(valid, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition-common in all', dlab))
     dev.off()
     
-    subsets = targets %>% mutate(Group = ifelse(is.na(Bound), 'Not Bound', as.character(Bound))) %>% select(-Bound)
-    preview(plot_density(valid, subsets = subsets, subset_name = 'test'))
+#    subsets = targets %>% mutate(Group = ifelse(is.na(Bound), 'Not Bound', as.character(Bound))) %>% select(-Bound)
+#    preview(plot_density(valid, subsets = subsets, subset_name = 'test'))
+
+    if(!is.null(args$subsets)){
+        subsets = read.delim(args$subsets)
+        groups = grep(args$group_by, colnames(subsets), ignore.case = TRUE, value = TRUE)
+        if(length(groups) == 0) warning("Can not group genes, incorrect column name provided and no Group column present.")
+
+        x = grep('Gene', colnames(subsets), ignore.case = TRUE)
+
+        if(length(x) >= 1){
+            keep = sapply(x, function(y) grep('ENS', subsets[1, y]))
+            to_rename = c(colnames(subsets)[keep], groups)
+            subsets = subsets %>% dplyr::rename_(.dots = setNames(to_rename, c('gene_id', 'Group'))) %>%
+                select(gene_id, Group)
+        
+            pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '-with-subsets.pdf')))
+            plot_density(valid, combination = combn(mixedsort(conditions),2),
+                                 label = paste0('Mean per condition-common in all', dlab),
+                                 subsets = subsets, subset_name = basename(args$subsets))
+            dev.off()
+        } else {
+            warning("No gene column found. Not plotting travelling ratio for subsets")
+        }
+
+    }
+
 
 }
 
 calculating_travelling_ratio_maria = function(){# {{{
+    library(rtracklayer)
     args$bed = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bowtie/coverage/ddup/3KO_30m-S5P_1_ddup.bedgraph'
     coverage = import.bed(args$bed)
     genes = import.gff3(args$gtf)
