@@ -36,16 +36,19 @@ args = parser$parse_args()
 if(FALSE){
     args = list()
     args$annotation = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/Ens75_genes+transscripts.txt'
-    args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bowtie/coverage/ddup/"
-    args$out = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10"
+#    args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bowtie/coverage/ddup/"
+    args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bam-compare/ses-norm/"
+#    args$out = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10"
+    args$out = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/pausing"
     args$gtf = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.rtracklayer-genes.gtf"
     args$subsets = "/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/inducible/results/expression-fc-consistent-significance-all-comparisons.tsv"
     args$group_by = 'regulated'
     args$targets = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/from_meryem/feature-annotation/Condition_7E12_2i_Proteins_M2_meryem_filtered_AND_Chd4_meryem_filtered_Ov1bp.binding-per-gene.tsv"
-    args$pattern = "h24-S5P_1"
+#    args$pattern = "h24-S5P_1"
 }# }}}
 
-output_path = file.path(args$out, 'pausing')
+#output_path = file.path(args$out, 'pausing')
+output_path = file.path(args$out, 'normalised-to-input')
 plot_path = file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 # }}}
