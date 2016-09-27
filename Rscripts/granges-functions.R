@@ -281,6 +281,8 @@ get_hits_scores = function(query, subj, value) {# {{{
     return(ov)
 }# }}}
 
+import_bed = rtracklayer::import.bed
+
 import_broadPeak = function(broad){# {{{
     x = c('dplyr','GenomicRanges')
     lapply(x, suppressMessages(library), character.only=T)
@@ -323,17 +325,19 @@ import_gappedPeak = function(gapped){# {{{
     
     block_lengths = lapply(strsplit(as.character(df$block_length), ','), as.numeric)
     block_starts = lapply(strsplit(as.character(df$block_start), ','), as.numeric)
-    blocks = lapply(1:length(block_starts)[1:5], function(x){
+    blocks = lapply(1:length(block_starts), function(x){
                         block_start = df[x, 'start'] + block_starts[[x]]
                         block_end = block_start + block_lengths[[x]]
                         tmp_df = data.frame(chr = rep(df[x, 'chr'], length(block_lengths[[x]])),
                                             start = block_start,
                                             end = block_end, 
-                                            name = paste0(df[x, 'name'], paste0('_block_',
-                                                                                letters[1:length(block_lengths[[x]])]))
+                                            block_name = paste0(df[x, 'name'], paste0('_block_',
+                                                                                letters[1:length(block_lengths[[x]])])),
+                                            name = rep(df[x, 'name'], length(block_lengths[[x]]))
                                             )}) %>%
-    dplyr::bind_rows()
-    blocks = with(blocks, GRanges(chr, IRanges(start, end), strand = '*', name = name))
+    dplyr::bind_rows() %>% left_join(df, by = c("chr", "name"))
+    blocks = blocks %>% dplyr::rename(block_start = start.x, block_end = end.x)
+    blocks = with(blocks, GRanges(chr, IRanges(block_start, block_end), strand = '*', name = block_name))
 
     gapped = with(df %>% dplyr::select(chr, start, end, strand, qvalue, fe) %>% mutate(strand=gsub('.', '*', strand)),
          GRanges(chr, IRanges(start,end), strand, qvalue=qvalue, fe=fe))
