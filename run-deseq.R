@@ -13,10 +13,10 @@ parser$add_argument('-f', '--factors', action ="store_true", default = FALSE, he
 parser$add_argument('-n', '--fragment', default = 200, help = "Fragment length selected in library prep")
 parser$add_argument('-g', '--gtf', default = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf",
                     help= "GTF file. Looks for the rtracklayer generated gtfs for that annotation. If not found it runs get-annotation-rscript.R")
+parser$add_argument('-s', '--genome_size', default = FALSE, help= "Chromosome lengths file.")
+parser$add_argument('-t', '--targets', default = FALSE, help= "TSV with gene Id column and Bound column generated from annotate-regions.R")
+parser$add_argument('--tname', default = FALSE, help= "Name/description for the subsetted/targeted genes")
 # e.g "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/MM10.genome"
-parser$add_argument('-s', '--genome_size', action ="store_true", default = FALSE, help= "Chromosome lengths file.")
-parser$add_argument('-t', '--targets', action ="store_true", default = FALSE, help= "TSV with gene Id column and Bound column generated from annotate-regions.R")
-parser$add_argument('--tname', action ="store_true", default = FALSE, help= "Name/description for the subsetted/targeted genes")
 
 args = parser$parse_args()
 
@@ -36,7 +36,8 @@ x = c('DESeq2', 'dplyr')
 lapply(x, library, character.only=T)
 source("~/source/Rscripts/deseq-functions.R")
 source("~/source/Rscripts/rna-norm-functions.R")
-#source("~/source/Rscripts/functions.R")
+source("~/source/Rscripts/functions.R")
+#select = dplyr::select
 
 # dplyr helper function.
 add_rownames = function(df, var = 'rowname') {
@@ -53,6 +54,17 @@ counts = export_counts(counts_path)
 lib_indices = match(design$Library, colnames(counts))
 counts = counts[, lib_indices[!is.na(lib_indices)]]
 
+# the last level of the Contrast variable will be used over the first level 
+# e.g if levels(design$Contrast)
+# [1] wt wt ko ko
+# Levels: ko wt
+# FC = log2(wt/ko) and positive FC corresponds to downregulation in the ko while positive corresponds to upregulation in the ko
+# As this is counterintuitive when dealing with wt,ko change the levels order so that positive FC means upreg in ko
+# always write files as denominator-nominator.deseq.tsv so you know what comparison has been made
+if(all(levels(design$Contrast) == c('ko','wt'))) {
+    design$Contrast = factor(design$Contrast, levels = c('wt', 'ko'))
+}
+
 cds = DESeqDataSetFromMatrix(counts, design, design = ~Contrast)
 cds = estimateSizeFactors(cds)
 # colnames are not set in the cds for some puzzling reason so setting them manually
@@ -62,10 +74,10 @@ colnames(cds) = colnames(counts)
 comparison = design %>% select(Contrast, Condition) %>% unique()
 if(comparison %>% select(Condition) %>% unique() %>% length() == 1){
     label = paste(comparison[1,'Condition'],
-                  paste(comparison[['Contrast']], collapse ='-'),
+                  paste(levels(comparison[['Contrast']]), collapse ='-'),
                   sep = '_')
 } else {
-    label = comparison %>% mutate(Label = paste(Condition, Contrast, sep='_')) %>% .[['Label']] %>% paste(collapse = '-')
+    label = comparison %>% mutate(Label = paste(Condition, levels(Contrast), sep='_')) %>% .[['Label']] %>% paste(collapse = '-')
 }
 
 index = lapply(1:nrow(comparison), function(i){
@@ -99,8 +111,8 @@ write.table(norm_counts,
             file = file.path(output_path, paste0(label, '.normalised-counts.tsv')),
             row.names = T, col.names = T, quote = F, sep = "\t")
 
-# Running DE and plotting# {{{
 pdf(file.path(plot_path, paste0(label, '.pdf')), paper='a4')
+# Running DE and plotting# {{{
 dds = DESeq(cds)
 rld = rlog(dds)
 source("~/source/Rscripts/deseq-functions.R")
@@ -115,7 +127,7 @@ plotMA(res, alpha = 0.05)
 
 # http://rpackages.ianhowson.com/bioc/DESeq/man/estimateDispersions.html
 
-dev.off()# }}}
+# }}}
 
 res = res %>% as.data.frame() %>% add_rownames('Gene') %>% arrange(padj, log2FoldChange)
 res %>% select(Gene,
@@ -126,8 +138,7 @@ res %>% select(Gene,
 write.table(res, file.path(output_path, paste0(label, '.deseq.tsv')),
             quote = FALSE, row.names = FALSE, sep = "\t")
 
-res = res %>% filter(!is.na(padj))
-significant = res %>% filter(padj < 0.05)
+significant = res %>% filter(!is.na(padj)) %>% filter(padj < 0.05)
 significant = significant %>% mutate(Condition = label)
 
 significant_fc = res %>% filter(padj < 0.05, log2FoldChange >= 2.0 )
@@ -182,9 +193,13 @@ efflengths = efflengths[match(rownames(efflengths), rownames(cnt4expression)), ]
 # give same results as mine https://github.com/nunofonseca/irap/blob/master/aux/R/irap_utils.R
 fpkms = round(counts_to_FPKM(cnt4expression, setNames(efflengths[['efflength']], rownames(efflengths))), 2)
 fpkms = fpkms %>% as.data.frame() %>% add_rownames('Gene')
+write.table(fpkms, file.path(output_path, paste0(label, '.raw-count-fpkms.tsv')),
+            quote = FALSE, row.names = FALSE, sep = "\t")
 
 tpms = round(counts_to_TPM(cnt4expression, setNames(efflengths[['efflength']], rownames(efflengths))), 2)
 tpms = tpms %>% as.data.frame() %>% add_rownames('Gene')
+write.table(tpms, file.path(output_path, paste0(label, '.raw-count-tpms.tsv')),
+            quote = FALSE, row.names = FALSE, sep = "\t")
 # For plotting FPKMs or TPMs use log2
 
 # Check if ensembl to gene name file exists otherwise print command to create it and exit# {{{
@@ -204,10 +219,11 @@ markers = plyr::join_all(lapply(names(tmp), function(y) tmp[[y]] %>% mutate(stat
 
 first_contrast = setNames(as.character(design[['Contrast']]), design[['Library']])
 second_contrast = setNames(gsub(".*_", '', as.character(design[['Library']])), design[['Library']])
-preview(plot_fpkm(fpkms = fpkms, markers = markers, first_contrast = first_contrast, results = results, second_contrast = second_contrast))
+plot_fpkm(fpkms = tpms, markers = markers, first_contrast = first_contrast, results = res, second_contrast = second_contrast)
 
 # if this is logical means is set to default which is FALSE
 if(!is.logical(args$genome_size)){# {{{
+    library(RNASeqPower)
     genome_size = read.delim(args$genome_size, sep = '\t', header = F, row.names = 1)
     depth_of_coverage = apply(counts,2,sum)*100/sum(as.numeric(genome_size[[1]]))
     # power is the fraction of true positives that will be detected
@@ -229,11 +245,19 @@ if(!is.logical(args$targets)){# {{{
     } else {
         subset_name = 'In subset'
     }
-    preview(plot_density(deseq_res = res, subsets = subsets, subset_name = subset_name, label = label))
+    plot_density(deseq_res = res, subsets = subsets, subset_name = subset_name, label = label)
 } else {
-    preview(plot_density(deseq_res = res))
+    plot_density(deseq_res = res, label = label)
 }# }}}
 
+gene_scores = as.data.frame(res) %>% dplyr::select(Gene, padj)
+gene_scores = setNames(gene_scores[[2]], gene_scores[[1]])
+
+# Doing GSEA on de genes and de and db genes
+source("~/source/Rscripts/functions.R")
+get_set_enrichment(gene_scores = gene_scores, label = label)
+
+dev.off()
 
 inprogress = function(){# {{{
 library("biomaRt")
