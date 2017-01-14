@@ -142,7 +142,7 @@ bedtoolsClosest <- function(bed, annotation, output_path){# {{{
     output <- paste0(basename(file_path_sans_ext(bed)),
                      '-annotated',
                      '.txt')
-    
+
     system(sprintf('bedtools closest -D "b" -a %s -b %s > %s',
                bed,
                annotation, # coming from the annotationInfo function -- this will not work as I changed that function and it doesn't return annotation does it?
@@ -157,7 +157,6 @@ bedtoolsClosest <- function(bed, annotation, output_path){# {{{
 }# }}}
 
 bedtoolsClosest(args$bed, genes_gtf, output_path)
-
 
 # Old code # {{{
 old <- function(){

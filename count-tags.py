@@ -29,7 +29,7 @@ parser.add_argument('--fs', required = False, default = 200, help = "Fragment si
 parser.add_argument('-u', '--upstream', required = False, default = 2000, help = "bp upstream of tss/peak centre")
 parser.add_argument('-d', '--downstream', required = False, default = 500, help ="bp downstream of tss/peak centre")
 parser.add_argument('-g', '--gtf', type = str,
-        default = '/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf',
+        default = '/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.75.gtf',
         help= 'GTF for the ensembl annotation.')
 parser.add_argument('-a', '--assembly', type = str, default = 'mm10', help= 'Assembly (default:mm10). Used to retrieve chromosomes lengths from ucsc')
 parser.add_argument('-r', '--regions', type = str, help= 'BED file containing regions of interest.')
@@ -199,9 +199,12 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
             ctrl_array = ctrl.array(features, bins = bins, processes = processes, shift_width = int(args.fs)/2)
             
             # Normalize to library size
+            # operation on the right side is performed first
             ip_array /= ip.mapped_read_count() / 1e6
             ctrl_array /= ctrl.mapped_read_count() / 1e6
             # RPKM would be ip_array /= ip.mapped_read_count() / 1e6 => ip_array *= binsize
+            ip_array /= 10
+            ctrl_array /= 10
 
             # Cache to disk (will be saved as "example.npz" and "example.features")
             persistence.save_features_and_arrays(

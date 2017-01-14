@@ -298,7 +298,7 @@ def main():
         names.add(basename)
     per_feature_type = {'genes':dict(), 'tss':dict(), 'gene_start':dict()}
     
-    # One file for all replicates in a given chip# {{{
+    # Per replicate print signal over all features # {{{
     for x in names:
         # Create pdfpage object
         pp = PdfPages(plot_path + x + '-profiles.pdf')
@@ -374,7 +374,14 @@ def main():
             if matching:
                 upstream, feature_type, downstream = matching.groups()
                 # bins are of size 100bp in count-tags.py
-                x = np.linspace(-int(upstream), int(downstream), 100)
+                x = np.linspace(-int(upstream), int(downstream), ((int(upstream) + int(downstream))/10))
+            elif re.compile('(\d+)-(\w+)').match(window[0]) or re.compile('(\w+)-(\d+)').match(window[0]):
+                if re.compile('(\d+)-(\w+)').match(window[0]):
+                    upstream, feature_type = re.compile('(\d+)-(\w+)').match(window[0]).groups()
+                    bins = int(upstream)/10
+                else:
+                    feature_type, downstream = re.compile('(\d+)-(\w+)').match(window[0]).groups()
+                    bins = int(downstream)/10
             else:
                 # gene array goes from o) to 100% in bins of 100bp
                 x = np.linspace(0, 100, 100)

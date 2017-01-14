@@ -1,7 +1,8 @@
-#!/bin/env perl
+#!/usr/bin/perl
 #
 #Author:Par Engstrom
 #
+# not using /bin/env perl because it complains about IO.sobeing compiled by a different version
 use warnings;
 use strict;
 use Getopt::Std;

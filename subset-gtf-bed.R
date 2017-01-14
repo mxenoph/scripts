@@ -4,7 +4,7 @@
 # Make library loading silent
 library = function (...) suppressMessages(base::library(...))
 library(argparse)
-#library(tools)
+library(tools)
 
 parser =  ArgumentParser(description="Get exons, introns, intergenic for given annotation")
 parser$add_argument('-b', '--bed', metavar = "file", type = "character", help = "Annotation file (BED)")
@@ -45,6 +45,7 @@ if(is.null(args$bed) & is.null(args$gtf)){
     if(!is.null(args$gtf)) {
         gff = rtracklayer::import.gff3(args$gtf)
         names(gff) = gff$ensembl_gene_id
+        print(head(gff))
         sapply(names(subsets), function(x) {
                        tmp = gff[names(gff) %in% subsets[[x]]]
                        rtracklayer::export.gff3(tmp, file.path(args$out, paste0(basename(file_path_sans_ext(args$gtf)), '.', x, '.gtf')))

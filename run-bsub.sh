@@ -11,6 +11,7 @@ unset args[${#args[@]}-1]
 jobname="$(basename "$( sed 's/ .*$//' <<< "$job" )")"
 # what if logs dir not present? it's not created in the makefile
 # How do you get the job id?
+mkdir -p logs
 logfile="logs/$jobname-%J.log"
 errfile="logs/$jobname-%J.err"
 

@@ -22,7 +22,7 @@ parser$add_argument('-e', '--active_enhancers', metavar= "file", type= "characte
 parser$add_argument('-p', '--poised_enhancers', metavar= "file", type= "character",
                     default = "/nfs/research2/bertone/user/mxenoph/hendrich/enhancers/mm10/enhancers-poised_2015-08-10.bed",
                     help= "BED file of active enhancers")
-
+#parser$add_argument('-h', '--heavy', action ="store_true", default = FALSE, help = "If set it prints maximal row annotation. Default = FALSE")
 args = parser$parse_args()
 
 # For testing interactively# {{{
@@ -91,7 +91,8 @@ theme = theme_update(legend.position = "bottom",
                      panel.border = element_blank(),
                      axis.line.x = element_line(),
                      axis.line.y = element_line(),
-                     panel.grid.major.x = element_blank())
+                     panel.grid.major.x = element_blank(),
+                     aspect.ratio = 1)
 
 # helper function to plot in preview.pdf when debugging# {{{
 preview = function(f) {
@@ -298,6 +299,8 @@ differential_binding = function (cnf, protein, cpalette = default_colors){
     contrast = dba.contrast(counts, categories = DBA_CONDITION, minMembers = 2)
     
     print('Calling DB sites.')
+    # Be careful. Sites reported by dba.analyze are based on the 0.01 cutoff. Don't get confused why the numbers are different
+    # from what you get
     diff_bound = dba.analyze(contrast, method = DBA_DESEQ2,
                              # indicating control reads are subtracted
                              bSubControl= TRUE,
@@ -355,7 +358,6 @@ differential_binding = function (cnf, protein, cpalette = default_colors){
                               bUsePval = FALSE,
                               th = 0.05)
 
-        res = DiffBind:::pv.DBAreport(diff_bound, contrast = 1, method = "DESeq2", bUsePval = F, th = 100, bNormalized = T)
         # So that the function doesn't crush for cases where no db detected # {{{
         if( length(results) != 0 ) {
             print(paste0('Found significant differential binding for comparison ', comparison))
@@ -484,12 +486,12 @@ format_cdf = function(cdf, contains_times = FALSE, threshold = 0.05){
         if(contains_times){
             colnames(column_annotation) = "Time"
             color = setNames(colorRampPalette(brewer.pal(9,'PuBuGn'))(nrow(column_annotation)),
-                              column_annotation[[1]])
+                              levels(column_annotation[[1]]))
             anno_colors[["Time"]] = cool_colors
         } else{
             colnames(column_annotation) = "Condition"
-            color = setNames(default_colors[nrow(column_annotation)],
-                              column_annotation[[1]])
+            color = setNames(unname(default_colors[1:nrow(column_annotation)]),
+                              levels(column_annotation[[1]]))
             anno_colors[["Time"]] = cool_colors
         }
         rownames(column_annotation) = colnames(plot_data)
@@ -502,9 +504,31 @@ format_cdf = function(cdf, contains_times = FALSE, threshold = 0.05){
     }
 } # }}}
 
-annotate = function(grange, annotations, output_path, target,# {{{
-                    priority = c('2000-gene_start-500', 'first-exon', 'active_enhancers',
-                                 'poised_enhancers', 'exons', 'first-intron', 'introns', 'genes')) {
+annotate = function(grange, output_path, target,# {{{
+                    priority = c('2000-gene_start-500', 'active_enhancers','poised_enhancers',
+                                 'first-exon', 'exons', 'first-intron', 'introns', 'genes')) {
+
+    # Retrieve annotation from gtf files# {{{
+    pattern = paste0(file_path_sans_ext(args$gtf), '.rtracklayer-')
+    rtracklayer_output = c('5000-tss-2000', '2000-tss-500',
+                           '5000-gene_start-2000', '2000-gene_start-500',
+                           'exons', 'first-exon',
+                           'introns', 'first-intron',
+                           'genes', 'canonical-transcripts')
+    files = paste0(paste(pattern, rtracklayer_output, sep=''), '.gtf')
+
+    library(rtracklayer)
+    if (any(file.exists(files))){
+        print('Importing files.')
+        annotations = lapply(files, function(x) import.gff3(x))
+        names(annotations) = rtracklayer_output
+        annotations$active_enhancers = import.bed(args$active_enhancers)
+        annotations$poised_enhancers = import.bed(args$poised_enhancers)
+    } else {
+        command = paste("Rscript ~/source/get-annotation-rscript.R -G", args$gtf, '-p', ncores, collapse = " ")
+        stop(paste('Annotation GTFs do not exist. Run `', command, '` first.', collapse = ' '))
+        
+    }# }}}
 
     stopifnot(is(grange, "GRanges"))
     total = length(grange)
@@ -580,9 +604,44 @@ annotate = function(grange, annotations, output_path, target,# {{{
     per_feature[['intergenic']] = total - sum(unlist(per_feature))
     per_feature = unlist(per_feature)
     per_feature = per_feature / total
-    return(list(per_feature = per_feature, per_region = per_region))
+    return(list(per_feature = per_feature, per_region = per_region, annotations = annotations))
 }
 # }}}
+
+        # Get distance from genes# {{{
+get_distances = function(grange, annotations){
+    library(ChIPpeakAnno)
+    if(is.null(names(annotations[['genes']]))) names(annotations[['genes']]) = mcols(annotations[['genes']])[['ensembl_gene_id']]
+    distance_from_genes = annotatePeakInBatch(grange, AnnotationData = annotations[['genes']])
+    # ChIPpeakAnno returns duplicated(peak), for genes in the annotation that are overlapping
+    # these are not necessarily bidirectional, it's ensembl being "redundant"
+    # keep the first gene of the duplicates listed, not completely random but suffices
+    distance_from_genes = as.data.frame(distance_from_genes)  %>% filter(!duplicated(peak))
+    # some of the features will not match those genes reported in features_id because of what is priorotized in
+    # annotate()
+    row_annotation = distance_from_genes %>% select(peak, one_of(names(mcols(grange))), insideFeature, shortestDistance) %>%
+                        rename(orientation = insideFeature,
+                               d_relative_to_gene = shortestDistance) %>%
+                        mutate(d_relative_to_gene = d_relative_to_gene / 1000)
+    # discretize distance to look good on annotation tracks. Doing it manually cause not sure how to get # {{{
+    # what I want with a package
+    tmp = c()
+    bins = c(0, 0.5, 1, 5, 10, 50, 100, 300)
+    for (i in 1:length(bins)) {
+        if(i == length(bins)) {
+            x = row_annotation$d_relative_to_gene >= bins[i]
+            tmp[x] = paste0(bins[i], 'kb+')
+        } else {
+            x = row_annotation$d_relative_to_gene >= bins[i] & row_annotation$d_relative_to_gene < bins[i+1]
+            tmp[x] = paste0(bins[i], '-', bins[i+1], 'kb')
+        }
+    }
+    row_annotation = row_annotation %>% mutate(nearest_gene = factor(tmp, levels = mixedsort(unique(tmp)))) %>% 
+        select(-d_relative_to_gene)
+    # }}}
+    return(list(ra = row_annotation, fdf = distance_from_genes))
+}# }}}
+
 
 # When wanting to retrieve a cluster call the function to get IDs in particular cluster# {{{
 # df = tmp$plot_data, regions = bdf
@@ -596,7 +655,6 @@ get_cluster = function(results, k = 1, output_path, label, id = "ID"){
     return(heatmap_order)
 }
 # }}}
-
 
 
 # annotate genes and plot TPM and binding affinity for all de genes# {{{
@@ -781,7 +839,7 @@ main = function () {
 #    options(error=traceback)
 
     cnf_df = read.table(args$sheet, header=T, stringsAsFactors=F)
-    contains_times = any(gregexpr("h[[:digit:]]+", cnf$Condition, ignore.case = T) != -1) | any(gregexpr("[[:digit:]]+h", cnf$Condition, ignore.case = T) != -1) | any(gregexpr("[[:digit:]]+m", cnf$Condition, ignore.case = T) != -1)
+    contains_times = any(gregexpr("h[[:digit:]]+", cnf_df$Condition, ignore.case = T) != -1) | any(gregexpr("[[:digit:]]+h", cnf_df$Condition, ignore.case = T) != -1) | any(gregexpr("[[:digit:]]+m", cnf_df$Condition, ignore.case = T) != -1)
     if(contains_times){
         tmp = convert_time(cnf_df$Condition)
         cnf_df[tmp$index, 'Condition'] = tmp$values
@@ -798,6 +856,7 @@ main = function () {
             differential_binding(cnf, p)
         }
     }
+    print('diff binding finished ok')
 
     comparisons = list.files(pattern = "[^db].tsv", path = output_path, full.name = T)
     comparisons = comparisons[gregexpr(".*_.*-", basename(comparisons)) != -1]
@@ -811,30 +870,9 @@ main = function () {
     colnames(tmp) = c('c1', 'c2')
     comparisons = cbind(comparisons, tmp)
 
-    # Retrieve annotation from gtf files# {{{
-    pattern = paste0(file_path_sans_ext(args$gtf), '.rtracklayer-')
-    rtracklayer_output = c('5000-tss-2000', '2000-tss-500',
-                           '5000-gene_start-2000', '2000-gene_start-500',
-                           'exons', 'first-exon',
-                           'introns', 'first-intron',
-                           'genes', 'canonical-transcripts')
-    files = paste0(paste(pattern, rtracklayer_output, sep=''), '.gtf')
-
-    library(rtracklayer)
-    if (any(file.exists(files))){
-        print('Importing files.')
-        annotations = lapply(files, function(x) import.gff3(x))
-        names(annotations) = rtracklayer_output
-        annotations$active_enhancers = import.bed(args$active_enhancers)
-        annotations$poised_enhancers = import.bed(args$poised_enhancers)
-    } else {
-        command = paste("Rscript ~/source/get-annotation-rscript.R -G", args$gtf, '-p', ncores, collapse = " ")
-        stop(paste('Annotation GTFs do not exist. Run `', command, '` first.', collapse = ' '))
-        
-    }# }}}
-
     # Heatmap for histone mods across time points# {{{
     for (p in proteins){
+        pdf(file.path(plot_path, paste0('differential_binding-', p, '.pdf')), height = 700, width = 700)
         print(paste0('Plotting heatmap for ', p))
         fs = comparisons %>% dplyr::select(comparisons) %>% 
                 filter(grepl(p, comparisons)) %>%
@@ -851,61 +889,52 @@ main = function () {
                        warning=function(w) w)
         if(is(bdf, 'error')) next;
 
-        # Rsgions considered in DB analysis. Not differentially bound ones!
-        db_regions = with(bdf_cnt,
-                          GRanges(seqnames = seqnames,
-                                  IRanges(start, end),
-                                  strand = strand))
-        names(db_regions) = paste(seqnames(db_regions), start(db_regions), end(db_regions), sep = "_")
-        annotated_regions = annotate(db_regions, annotations, output_path, p)
+        #if(args$heavy) {
+        if(TRUE) {
+            # Regions considered in DB analysis. Not differentially bound ones!
+            sites = with(bdf_cnt,
+                         GRanges(seqnames = seqnames,
+                                 IRanges(start, end),
+                                 strand = strand))
+            names(sites) = paste(seqnames(sites), start(sites), end(sites), sep = "_")
+            annotated_regions = annotate(sites, output_path, p)
+            annotated_regions$per_region = annotated_regions$per_region[match(rownames(annotated_regions$per_region), names(sites)), ]
+            mcols(sites)$overlapping_feature = annotated_regions$per_region[[1]]
+            mcols(sites)$feature_id = annotated_regions$per_region[[2]]
 
-        library(ChIPpeakAnno)
-        db_distance_from_genes = annotatePeakInBatch(db_regions, AnnotationData = annotations[['genes']])
-        db_distance_from_genes = as.data.frame(db_distance_from_genes)
-        dup = db_distance_from_genes %>% filter(duplicated(peak)) %>% select(peak) %>% .[[1]]
-        tmp_ra = add_rownames(bdf$ra, var = 'peak')
-        # filtering duplicated(peak) because ChIPpeakAnno will report 2 genes if peak has equal distance from them
-        # here just selecting the first one reported
-        tmp_ra = right_join((add_rownames(annotated_regions$per_region, var='peak') %>% select(-feature_id)), tmp_ra, by ='peak')
-        bdf$ra = db_distance_from_genes %>% select(peak, insideFeature, shortestDistance) %>%
-                    rename(relative_to_gene = insideFeature,
-                           d_relative_to_gene = shortestDistance) %>%
-                    mutate(d_relative_to_gene = d_relative_to_gene / 1000) %>%
-                    right_join(tmp_ra, by = 'peak') %>% filter(!duplicated(peak))
-        rownames(bdf$ra) = bdf$ra[['peak']]
-        bdf$ra = bdf$ra[,-1]
+            # Getting distances from genes
+            tmp = get_distances(sites, annotated_regions$annotations)
+            bdf$ra = add_rownames(bdf$ra, var = 'peak') %>% left_join(tmp$ra, by = 'peak')
+            rownames(bdf$ra) = bdf$ra[['peak']]
+            bdf$ra = bdf$ra[,-1]
 
-        # discretize distance to look good on annotation tracks. Doing it manually cause not sure how to get # {{{
-        # what I want with a package
-        tmp = c()
-        bins = c(0, 0.5, 1, 5, 10, 50, 100, 300)
-        for (i in 1:length(bins)) {
-            if(i == length(bins)) {
-                x = bdf$ra$d_relative_to_gene >= bins[i]
-                tmp[x] = paste0(bins[i], 'kb+')
-            } else {
-                x = bdf$ra$d_relative_to_gene >= bins[i] & bdf$ra$d_relative_to_gene < bins[i+1]
-                tmp[x] = paste0(bins[i], '-', bins[i+1], 'kb')
-            }
+            bdf$ac$nearest_gene = setNames(colorRampPalette(brewer.pal(9,"RdYlGn"))(length(levels(bdf$ra$nearest_gene))),
+                                           mixedsort(levels(bdf$ra$nearest_gene)))
+
+            plotting_order = c('2000-gene_start-500', 'gene_body', 'intergenic', 'poised_enhancers', 'active_enhancers')
+            # summarising all exons, introns, firt-* as gene body
+            bdf$ra = bdf$ra %>% 
+                mutate(overlapping_feature = ifelse(overlapping_feature %in% c('exons', 'first-exon', 'introns', 'first-intron'),
+                                                    'gene_body', overlapping_feature))
+            # Setting levels for factor cause otherwise  pheatmap complains
+            bdf$ra$overlapping_feature = factor(bdf$ra$overlapping_feature, levels = plotting_order)
+            bdf$ac$overlapping_feature = colorRampPalette(brewer.pal(8,"Set2"))(length(plotting_order))
+            names(bdf$ac$overlapping_feature) = plotting_order
+
+            plot_data = as.data.frame(t(annotated_regions$per_feature)) %>%
+                dplyr::select(-one_of("exons", "first-exon", "introns", "first-intron")) %>%
+                mutate(gene_body = 1 - rowSums(.))
+            plot_data = reshape2::melt(plot_data) %>% rename(Feature = variable)
+
+            plot_data$Feature = factor(plot_data$Feature, levels = plotting_order)
+            plot_data = plot_data %>% arrange(Feature) %>% mutate(value = value * 100)
+
+            pp = ggplot(plot_data, aes(x = paste0(p, ' - sites considered in analysis'), y = value, fill = Feature)) + geom_bar(stat="identity")
+            pp = pp + scale_fill_brewer(palette = "Set2")
+            pp = pp + theme(axis.text.x = element_text(angle = 25, hjust = 1),
+                            legend.position = "right" ) + ylab('% of peaks') + xlab('')
         }
-        bdf$ra$d_relative_to_gene = tmp 
-        # }}}
-
-        continuous_colors = colorRampPalette(brewer.pal(9,"RdYlGn"))(length(unique(tmp)))
-        bdf$ac$d_relative_to_gene = continuous_colors
-        names(bdf$ac$d_relative_to_gene) = mixedsort(unique(tmp))
         
-        ordering = c('2000-tss-500','intergenic', 'first-exon', 'exons',
-                     'first-intron', 'introns','active_enhancers', 'poised_enhancers')
-        # Setting levels for factor cause otherwise  pheatmap complains
-        bdf$ra$overlapping_feature = factor(bdf$ra$overlapping_feature, levels = ordering)
-        bdf$ac$overlapping_feature = colorRampPalette(brewer.pal(9,"Paired"))(length(ordering))
-        names(bdf$ac$overlapping_feature) = ordering
-        
-        pdf(file.path(plot_path, paste0('differential_binding-', p, '.pdf')), height = 700, width = 700)
-        print(head(bdf$plot_data))
-        print(class(as.data.frame((bdf$plot_data))))
-
         results = pheatmap(as.data.frame(bdf$plot_data),
                            clustering_distance_rows = "correlation",
                            clustering_method = "ward.D2", scale = 'row',

@@ -36,19 +36,20 @@ args = parser$parse_args()
 if(FALSE){
     args = list()
     args$annotation = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/Ens75_genes+transscripts.txt'
-#    args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bowtie/coverage/ddup/"
-    args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bam-compare/ses-norm/"
+    args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bowtie/coverage/ddup/"
+#    args$bed = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/bam-compare/ses-norm/"
 #    args$out = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10"
     args$out = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/pausing"
     args$gtf = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.rtracklayer-genes.gtf"
     args$subsets = "/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/inducible/results/expression-fc-consistent-significance-all-comparisons.tsv"
     args$group_by = 'regulated'
     args$targets = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/from_meryem/feature-annotation/Condition_7E12_2i_Proteins_M2_meryem_filtered_AND_Chd4_meryem_filtered_Ov1bp.binding-per-gene.tsv"
-#    args$pattern = "h24-S5P_1"
+    args$pattern = "h24-S5P_1"
 }# }}}
 
-#output_path = file.path(args$out, 'pausing')
-output_path = file.path(args$out, 'normalised-to-input')
+output_path = file.path(args$out, 'pausing')
+#output_path = file.path(output_path, 'normalised-to-input')
+output_path = file.path(output_path, 'lenient-filtering')
 plot_path = file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
 # }}}
@@ -81,7 +82,7 @@ convert_time = function(x) {
 # }}}
 
 # calculating travelling ratio based on Remco's/Meryem analysis# {{{
-calculate_travelling_ratio_meryem = function(files, annotation = args$annotation){
+calculate_travelling_ratio_meryem = function(files, annotation = args$annotation, threshold = 20){
     library(ChIPpeakAnno)
     library(data.table)
     library(Vennerable)
@@ -146,6 +147,15 @@ calculate_travelling_ratio_meryem = function(files, annotation = args$annotation
     collect_counts = function(files){# {{{
         counts = lapply(files, read.table, header = T)
         names(counts) = basename(gsub("_gene_signal.txt","",files))
+        tmp = sapply(strsplit(names(counts), '-'), function(x) strsplit(x[1], '_')[[1]][2])
+        map = convert_time(tmp)
+        tmp[map$index] = map$values
+        tmp = sapply(1:length(counts),
+                   function(x) paste0(strsplit(strsplit(names(counts)[x],
+                                                        '-')[[1]][1], '_')[[1]][1],
+                                      '_', tmp[x], '-',
+                                      strsplit(names(counts)[x], '-')[[1]][2]))
+        names(counts) = tmp
         counts = lapply(names(counts), function(x){ tmp = counts[[x]] %>%
                         rename_(.dots = setNames(c('gene.id', 'gene.name', 'prom.max', 'body.max'),
                                                  c('gene_id', 'gene_name',
@@ -156,30 +166,45 @@ calculate_travelling_ratio_meryem = function(files, annotation = args$annotation
                             })
         # merging list of dataframes into one dataframe (cool use of Reduce, ey?)
         counts = counts %>% Reduce(function(df1, df2) full_join(df1, df2, by = c('gene_id', 'gene_name')), .)
-        return(counts)
+        return(list(counts, tmp))
     }# }}}
     
-    travelling_ratio = function(cnt, for_sample){# {{{
+    get_travelling_ratio = function(cnt, for_sample){# {{{
         tr = cnt %>% select(gene_id, gene_name, starts_with(for_sample)) %>%
             # making sure the order is promoter, gene_body counts
             select(gene_id, gene_name, ends_with('promoter_max'), ends_with('gene_body_max')) %>%
             # what is the filtering based on, why 20 reads in gene_body? Might have to remove this if normalising based on input
             mutate(total = .[[3]] + .[[4]], 
                    travelling_ratio = round(.[[3]] / (total + 0.001), digits = 2), 
-                   travelling_ratio_filtered = ifelse(total < 20, NA, travelling_ratio)) %>%
+                   travelling_ratio_filtered = ifelse(total < threshold, NA, travelling_ratio)) %>%
             rename_(.dots = setNames(c('total', 'travelling_ratio', 'travelling_ratio_filtered'),
                                      c(paste0(for_sample, '.total'),
                                        paste0(for_sample, '.travelling_ratio'),
                                        paste0(for_sample, '.travelling_ratio_filtered'))))
         return(tr)
     }# }}}
-
+    
     # g() is defined in Rprofile and it assigns the list returned from get_annotation_from_meryem() 
     g(genes, annotation, coordinates) %=% get_annotation_from_file(annotation)
-    counts = collect_counts(files)
-    travelling_ratio = lapply(basename(gsub("_gene_signal.txt","",files)), function(x) travelling_ratio(counts, x))
+    g(counts, samples) %=% collect_counts(files)
+
+    travelling_ratio = lapply(samples, function(x) get_travelling_ratio(counts, x))
     travelling_ratio = travelling_ratio %>% Reduce(function(df1, df2) full_join(df1, df2, by = c('gene_id', 'gene_name')), .)
-    return(travelling_ratio)
+
+    conditions = sapply(strsplit(samples, '-'), function(x) x[1])
+    tmp = sapply(strsplit(samples, '-'), function(x) strsplit(x[2], '_')[[1]][1])
+    conditions = unique(paste0(conditions, '-', tmp))
+    travelling_ratio_lenient = lapply(conditions, function(x){
+            tmp = counts %>% select(gene_id, gene_name, matches(x)) %>%
+                mutate(a = select(., contains('promoter')) %>% rowMeans %>% round,
+                       b = select(., contains('gene_body')) %>% rowMeans %>% round) %>%
+            select(gene_id, gene_name, a, b) %>%
+            rename_(.dots = setNames(c('a', 'b'),
+                                     paste0(x, c('.promoter_max', '.gene_body_max'))))
+            get_travelling_ratio(tmp, x)}) %>%
+    Reduce(function(df1, df2) full_join(df1, df2, by = c('gene_id', 'gene_name')), .)
+    
+    return(list(travelling_ratio, travelling_ratio_lenient))
 }
 # }}}
 
@@ -760,124 +785,133 @@ main(){
     library(ggplot2)
 
     files = list.files(pattern=glob2rx(paste("*_gene_signal*",".txt",sep="")), args$bed, full.name = T)
-    travelling_ratio = calculate_travelling_ratio_meryem(files)
+#    rpkm_files = files[grepl('RPKM', files)]
+    g(travelling_ratio, travelling_ratio_lenient) %=% calculate_travelling_ratio_meryem(files)
+#    travelling_ratio = calculate_travelling_ratio_meryem(rpkm_files, threshold = 1)
     write.table(travelling_ratio,
                 file = file.path(output_path, 'travelling-ratios-unfiltered.tsv'), quote = F, row.names = F, sep ="\t")
+    write.table(travelling_ratio_lenient,
+                file = file.path(output_path, 'travelling-ratios-lenient-filter.tsv'), quote = F, row.names = F, sep ="\t")
 
-    g(per_condition_tr, fc, conditions) %=% calculate_fc(travelling_ratio)
-    write.table(per_condition_tr,
-                file = file.path(output_path, 'travelling-ratios-replicate-summary.tsv'), quote = F, row.names = F, sep ="\t")
-    write.table(fc,
-                file = file.path(output_path, 'travelling-ratios-fc.tsv'), quote = F, row.names = F, sep ="\t")
-
-    dlab = ''
-    # removing samples from calculating TR per condition and consequently TR fold change# {{{
-    # all subsequent plots and calculations are done based on the fc computed without those samples
-    if(!is.null(args$pattern)){
-        g(per_condition_tr, fc, conditions) %=% calculate_fc(travelling_ratio %>% select(-matches(args$pattern)))
-        dlab =  paste0('-excluding-', gsub("\\*", "ANY", args$pattern))
+    report_travelling_ratio = function(travelling_ratio, dfilter = ''){# {{{
+        g(per_condition_tr, fc, conditions) %=% calculate_fc(travelling_ratio)
         write.table(per_condition_tr,
-                    file = file.path(output_path, paste0('travelling-ratios-replicate-summary',
-                                                         dlab, '.tsv')),
+                    file = file.path(output_path, paste0('travelling-ratios', dfilter, '-replicate-summary.tsv')),
                     quote = F, row.names = F, sep ="\t")
         write.table(fc,
-                    file = file.path(output_path, paste0('travelling-ratios-fc',
-                                                         dlab, '.tsv')),
-                                     quote = F, row.names = F, sep ="\t")
-    }# }}}
+                    file = file.path(output_path, paste0('travelling-ratios-fc.tsv')), quote = F, row.names = F, sep ="\t")
 
-    if(!is.null(args$targets)){
-        g(fc_annotated, targets) %=% tryCatch(annotate_df(fc),
-                       error=function(e) e)
-        if(is(fc_annotated, 'error')) {
-            warning('Could not annotate the data frame (no file written).')
-        } else {
-            write.table((fc_annotated %>% select(-annotation_files)),
-                        file = file.path(output_path, paste0('travelling-ratios-fc-annotated', dlab, '.tsv')),
+        dlab = ''
+        # removing samples from calculating TR per condition and consequently TR fold change# {{{
+        # all subsequent plots and calculations are done based on the fc computed without those samples
+        if(!is.null(args$pattern)){
+            message('Filtering out requested samples')
+            g(per_condition_tr, fc, conditions) %=% calculate_fc(travelling_ratio %>% select(-matches(args$pattern)))
+            dlab =  paste0('-excluding-', gsub("\\*", "ANY", args$pattern))
+            write.table(per_condition_tr,
+                        file = file.path(output_path, paste0('travelling-ratios-replicate-summary',
+                                                             dlab, '.tsv')),
                         quote = F, row.names = F, sep ="\t")
+            write.table(fc,
+                        file = file.path(output_path, paste0('travelling-ratios-fc',
+                                                             dlab, '.tsv')),
+                                         quote = F, row.names = F, sep ="\t")
+        }# }}}
+
+        if(!is.null(args$targets)){
+            g(fc_annotated, targets) %=% tryCatch(annotate_df(fc),
+                           error=function(e) e)
+            if(is(fc_annotated, 'error')) {
+                warning('Could not annotate the data frame (no file written).')
+            } else {
+                write.table((fc_annotated %>% select(-annotation_files)),
+                            file = file.path(output_path, paste0('travelling-ratios-fc-annotated', dlab, '.tsv')),
+                            quote = F, row.names = F, sep ="\t")
+            }
         }
-    }
 
-    # Melt travelling ratios and order according to times if samples from timecourse - gather() == melt()
-    TR = travelling_ratio %>% select(gene_id, gene_name, ends_with("travelling_ratio_filtered")) %>%
-        gather(variable, value, -gene_id, -gene_name)
-    TR = format_melted(TR)
+        # Melt travelling ratios and order according to times if samples from timecourse - gather() == melt()
+        TR = travelling_ratio %>% select(gene_id, gene_name, ends_with("travelling_ratio_filtered")) %>%
+            gather(variable, value, -gene_id, -gene_name)
+        TR = format_melted(TR)
 
-    pdf(file.path(plot_path, paste0('QQ-plots-normality.pdf')))# {{{
-    ablines = lapply(levels(TR$variable), function(x) {
-                         as.data.frame(get_qqline((TR %>% filter(variable == x) %>% .[['value']]))) %>%
-                             mutate(variable = x) }) %>%
-                Reduce(function(df1, df2) bind_rows(df1, df2), .) %>%
-                full_join((TR %>% dplyr::select(Replicate, Time, variable) %>% group_by(variable) %>% dplyr::slice(1:1)), by = "variable")
+        pdf(file.path(plot_path, paste0('QQ-plots-normality.pdf')))# {{{
+        ablines = lapply(levels(TR$variable), function(x) {
+                             as.data.frame(get_qqline((TR %>% filter(variable == x) %>% .[['value']]))) %>%
+                                 mutate(variable = x) }) %>%
+                    Reduce(function(df1, df2) bind_rows(df1, df2), .) %>%
+                    full_join((TR %>% dplyr::select(Replicate, Time, variable) %>% group_by(variable) %>% dplyr::slice(1:1)), by = "variable")
 
-    pp = ggplot(TR, aes(sample = value)) + stat_qq(geom = "point", size = 1) 
-    pp = pp + geom_abline(data = ablines, aes(slope = slope, intercept = int), colour = "red")
-    pp = pp + facet_grid(Time ~ Replicate)
-    pp = pp + theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
-    plot(pp)
+        pp = ggplot(TR, aes(sample = value)) + stat_qq(geom = "point", size = 1) 
+        pp = pp + geom_abline(data = ablines, aes(slope = slope, intercept = int), colour = "red")
+        pp = pp + facet_grid(Time ~ Replicate)
+        pp = pp + theme_bw() + theme(legend.position= "right", aspect.ratio = 1)
+        plot(pp)
 
-    gstats = lapply(levels(TR$variable), function(x){
-                        tmp = TR %>% filter(variable == x) %>% .[['value']]
-                        g(gstats, gofstats, fits) %=% check_normality(tmp, id = x)
-                        plot.new()
-                        grid.table(gofstats)
-                        return(as.data.frame(t(gstats)))}) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .)
-    gstats = gstats %>% mutate(sample = levels(TR$variable))
-    write.table(gstats,
-                file = file.path(output_path, paste0('per_replicate_stats.tsv')),
-                quote = F, row.names = F, sep ="\t")
-    dev.off()# }}}
+        gstats = lapply(levels(TR$variable), function(x){
+                            tmp = TR %>% filter(variable == x) %>% .[['value']]
+                            g(gstats, gofstats, fits) %=% check_normality(tmp, id = x)
+                            plot.new()
+                            grid.table(gofstats)
+                            return(as.data.frame(t(gstats)))}) %>% Reduce(function(df1, df2) bind_rows(df1, df2), .)
+        gstats = gstats %>% mutate(sample = levels(TR$variable))
+        write.table(gstats,
+                    file = file.path(output_path, paste0('per_replicate_stats.tsv')),
+                    quote = F, row.names = F, sep ="\t")
+        dev.off()# }}}
 
-    pdf(file.path(plot_path, 'density-plots.pdf'))
-    plot_density(TR, combination = combn(mixedsort(conditions),2), label = 'Full dataset')
-    dev.off()
-    
-    # per_condition_tr is of class "tbl_df" and melt doesn't play nice with that
-    tmp = per_condition_tr %>%
-          gather(variable, value, -gene_id) %>%
-          separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
-    tmp = format_melted(tmp)
-    
-    pdf(file.path(plot_path, paste0('density-plots-mean', dlab, '.pdf')))
-    plot_density(tmp, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition', dlab))
-    dev.off()
+        pdf(file.path(plot_path, 'density-plots.pdf'))
+        plot_density(TR, combination = combn(mixedsort(conditions),2), label = 'Full dataset')
+        dev.off()
+        
+        # per_condition_tr is of class "tbl_df" and melt doesn't play nice with that
+        tmp = per_condition_tr %>%
+              gather(variable, value, -gene_id) %>%
+              separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
+        tmp = format_melted(tmp)
+        
+        pdf(file.path(plot_path, paste0('density-plots-mean', dlab, '.pdf')))
+        plot_density(tmp, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition', dlab))
+        dev.off()
 
-    valid = per_condition_tr %>% na.omit() %>% gather(variable, value, -gene_id)
-    valid = valid %>% separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
-    valid = format_melted(valid)
-    
-    pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '.pdf')))
-    plot_density(valid, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition-common in all', dlab))
-    dev.off()
-    
+        valid = per_condition_tr %>% na.omit() %>% gather(variable, value, -gene_id)
+        valid = valid %>% separate(variable, c("variable", 'x'), sep = '-') %>% select(-x)
+        valid = format_melted(valid)
+        
+        pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '.pdf')))
+        plot_density(valid, combination = combn(mixedsort(conditions),2), label = paste0('Mean per condition-common in all', dlab))
+        dev.off()
+        
 #    subsets = targets %>% mutate(Group = ifelse(is.na(Bound), 'Not Bound', as.character(Bound))) %>% select(-Bound)
 #    preview(plot_density(valid, subsets = subsets, subset_name = 'test'))
 
-    if(!is.null(args$subsets)){
-        subsets = read.delim(args$subsets)
-        groups = grep(args$group_by, colnames(subsets), ignore.case = TRUE, value = TRUE)
-        if(length(groups) == 0) warning("Can not group genes, incorrect column name provided and no Group column present.")
+        if(!is.null(args$subsets)){
+            subsets = read.delim(args$subsets)
+            groups = grep(args$group_by, colnames(subsets), ignore.case = TRUE, value = TRUE)
+            if(length(groups) == 0) warning("Can not group genes, incorrect column name provided and no Group column present.")
 
-        x = grep('Gene', colnames(subsets), ignore.case = TRUE)
+            x = grep('Gene', colnames(subsets), ignore.case = TRUE)
 
-        if(length(x) >= 1){
-            keep = sapply(x, function(y) grep('ENS', subsets[1, y]))
-            to_rename = c(colnames(subsets)[keep], groups)
-            subsets = subsets %>% dplyr::rename_(.dots = setNames(to_rename, c('gene_id', 'Group'))) %>%
-                select(gene_id, Group)
-        
-            pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '-with-subsets.pdf')))
-            plot_density(valid, combination = combn(mixedsort(conditions),2),
-                                 label = paste0('Mean per condition-common in all', dlab),
-                                 subsets = subsets, subset_name = basename(args$subsets))
-            dev.off()
-        } else {
-            warning("No gene column found. Not plotting travelling ratio for subsets")
+            if(length(x) >= 1){
+                keep = sapply(x, function(y) grep('ENS', subsets[1, y]))
+                to_rename = c(colnames(subsets)[keep], groups)
+                subsets = subsets %>% dplyr::rename_(.dots = setNames(to_rename, c('gene_id', 'Group'))) %>%
+                    select(gene_id, Group)
+            
+                pdf(file.path(plot_path, paste0('density-plots-mean-common', dlab, '-with-subsets.pdf')))
+                plot_density(valid, combination = combn(mixedsort(conditions),2),
+                                     label = paste0('Mean per condition-common in all', dlab),
+                                     subsets = subsets, subset_name = basename(args$subsets))
+                dev.off()
+            } else {
+                warning("No gene column found. Not plotting travelling ratio for subsets")
+            }
+
         }
+    }# }}}
 
-    }
-
-
+    report_travelling_ratio(travelling_ratio)
+    report_travelling_ratio(travelling_ratio_lenient)
 }
 
 calculating_travelling_ratio_maria = function(){# {{{

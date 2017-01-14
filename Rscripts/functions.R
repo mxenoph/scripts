@@ -139,7 +139,7 @@ get_set_enrichment = function(gene_scores, ontology = "BP", organism = "org.Mm.e
     # List of packages to load
     x = c('topGO', 'dplyr', 'ggplot2', organism)
     lapply(x, suppressMessages(library), character.only=T)
-
+    gene_scores[is.na(gene_scores)] = 1
     diff_genes = function(gene_scores, padj = 0.05) {
         return(gene_scores < padj)
     }
@@ -229,7 +229,7 @@ get_set_enrichment = function(gene_scores, ontology = "BP", organism = "org.Mm.e
     # Makes no sense to get the GO graph if there are no significant terms
     if((significant %>% nrow()) > 0) {
         showSigOfNodes(go_data, score(result_fisher), firstSigNodes = 10, useInfo = 'all')
-        go_id = results %>% select(GO.ID) %>% .[[1]]
+        go_id = results %>% dplyr::select(GO.ID) %>% .[[1]]
         # Error with chip = organism, see https://support.bioconductor.org/p/68661/
         # still not solved so do not run for the moment
         #gene_table = printGenes(go_data, whichTerms = go_id[1], chip = organism, numChar = 40)

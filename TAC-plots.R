@@ -31,8 +31,10 @@ write.table(deseq_report_fpkm[[1]], file="/nfs/research2/bertone/user/mxenoph/he
 
 
 library(rtracklayer)
+source("~/source/Rscripts/functions.R")
 source("~/source/Rscripts/annotation-functions.R")
-annotationInfo('mm9')
+get_annotation('mm9')
+get_annotation('mm10')
 genes <- import(genes_gtf, asRangedData=F)
 
 markers <- read.table("/nfs/research2/bertone/user/mxenoph/hendrich/markers.txt", header=T, stringsAsFactors=F)
@@ -60,19 +62,23 @@ plot_fpkm <- function(fpkms, markers, de, name, what='p2'){
     }
     fpkms[['X1']] <- unlist(mclapply(as.character(fpkms[['X1']]), function(x) names(markers[markers == x])))
 
-    fpkms[, 'Condition'] <- gsub("2i", 'ESCs 2i', fpkms[['Condition']])
-    fpkms[, 'Condition'] <- gsub("Lif", 'ESCs SL', fpkms[['Condition']])
+    fpkms[, 'Condition'] <- gsub("2i", '2i', fpkms[['Condition']])
+    fpkms[, 'Condition'] <- gsub("Lif", 'SL', fpkms[['Condition']])
     fpkms[, 'Condition'] <- gsub("Epi", 'EpiSCs', fpkms[['Condition']])
 
+    library(RColorBrewer)
+    gg = brewer.pal(n = 6, name = "Paired")
+    gg = gg[c(1:2,5:6)]
+    names(gg)<- c('WT', 'WT_de', 'KO', 'KO_de')
     #gg <- c(gg_color_hue(2), c("#A1A1A1","#C9C9C9"))
-    gg <- c(c("#AC2A21","#007378"), c("#FF9087","#1AD9DE"))
-    names(gg)<- c('KO_de', 'WT_de', 'KO', 'WT')
+#    gg <- c(c("#AC2A21","#007378"), c("#FF9087","#1AD9DE"))
+#    names(gg)<- c('KO_de', 'WT_de', 'KO', 'WT')
     group_color <- fpkms$Group
     group_color <- as.character(gg[match(group_color,names(gg))])
     fpkms$Group <- factor(fpkms$Group, levels=c('WT','KO', 'WT_de', 'KO_de'))
 
     if(what == 'p1'){
-        p <- ggplot(fpkms, aes(x=Condition, y=value, color=Group)) + geom_point() + scale_color_manual(values=gg)
+        p <- ggplot(fpkms, aes(x=Condition, y=value, color=Group)) + geom_point(size = 3) + scale_color_manual(values=gg)
         p <- p + geom_errorbar(stat = "hline", yintercept = "mean", width=0.8,aes(ymax=..y..,ymin=..y..))
         p <- p + facet_grid(~ X1,) + theme_bw() + xlab('') + ylab("FPKM")
         p <- p + theme(panel.grid.major.x= element_blank(),
@@ -80,19 +86,21 @@ plot_fpkm <- function(fpkms, markers, de, name, what='p2'){
                        axis.text.x=element_text(angle=90, vjust=1)) + ggtitle(name)
         print(p)
    } else if (what == 'p2') {
-        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[1:3], 'State'] <- 'Pluripotency'
-        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[4:7], 'State'] <- 'Naive Pl.'
-        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[8:10], 'State'] <- 'Primed Pl.'
-        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[11:15], 'State'] <- 'Endoderm'
-        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[c(16:17,19)], 'State'] <- 'Ectoderm'
-        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[18], 'State'] <- 'Mesoderm'
-        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[c(20,21)], 'State'] <- 'JAK/STAT'
+        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[1:7], 'State'] <- 'Pluripotency'
+        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[8:13], 'State'] <- 'Endoderm/Ectoderm'
+#        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[1:3], 'State'] <- 'Pluripotency'
+#        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[4:7], 'State'] <- 'Naive Pl.'
+#        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[8:10], 'State'] <- 'Primed Pl.'
+#        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[11:15], 'State'] <- 'Endoderm'
+#        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[c(16:17,19)], 'State'] <- 'Ectoderm'
+#        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[18], 'State'] <- 'Mesoderm'
+#        fpkms[as.character(fpkms[['X1']]) %in% names(markers)[c(20,21)], 'State'] <- 'JAK/STAT'
         
         p <- ggplot(fpkms, aes(x=X1, y=value, color=Group)) + geom_point(size=2) + scale_color_manual(values=gg)
         p <- p + geom_errorbar(stat = "hline", yintercept = "mean", width=0.8,aes(ymax=..y..,ymin=..y..))
         p <- p + facet_grid(Condition ~ State, scales="free")
         p <- p + scale_y_continuous(breaks= c(seq(0, 100, by=20), seq(100, 800, by=200)))
-        p <- p + theme_bw() + xlab('') + ylab("FPKM")
+        p <- p + theme_bw() + xlab('') + ylab("TPM")
         p <- p + theme(strip.text.x = element_text(size = 10, colour = "black", angle = 0),
                        axis.text.y = element_text(size=7, face="plain"),
                        panel.grid.major.x = element_blank(),
@@ -104,23 +112,31 @@ plot_fpkm <- function(fpkms, markers, de, name, what='p2'){
 
 
 source("~/source/Rscripts/functions.R")
-de <- list('2i'= deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_2ivsKO_2i.txt")$binary,
-           'Lif' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_LifvsKO_Lif.txt")$binary,
-           'Epi' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_EpivsKO_Epi.txt")$binary)
+de_mine <- list('2i'= deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_2ivsKO_2i.txt", padj=0.05)$binary,
+           'Lif' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_LifvsKO_Lif.txt", padj=0.05)$binary,
+           'Epi' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_EpivsKO_Epi.txt", padj=0.05)$binary)
 
 
 # using remcos de genes apart from epis
 de <- list('2i'= deseq2vect("/nfs/research2/bertone/user/remco/hendrich/deseq/WT_2ivsKO_2i.txt", padj=0.1)$binary,
            'Lif' = deseq2vect("/nfs/research2/bertone/user/remco/hendrich/deseq/WT_LifvsKO_Lif.txt", padj=0.1)$binary,
            'Epi' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_EpivsKO_Epi.txt", padj=0.1)$binary)
+de_0.05 <- list('2i'= deseq2vect("/nfs/research2/bertone/user/remco/hendrich/deseq/WT_2ivsKO_2i.txt", padj=0.05)$binary,
+           'Lif' = deseq2vect("/nfs/research2/bertone/user/remco/hendrich/deseq/WT_LifvsKO_Lif.txt", padj=0.05)$binary,
+           'Epi' = deseq2vect("/nfs/research2/bertone/user/mxenoph/hendrich/htseq_counts/de_anal/WT_EpivsKO_Epi.txt", padj=0.05)$binary)
 
 lineage_marker <- c(markers$PL_general, markers$PL_naive, markers$PL_primed, markers$Endoderm, markers$Mesoderm, markers$Ectoderm, markers$JAK_STAT)
 lineage_marker <- lineage_marker[c('Nanog', 'Pou5f1', 'Sox2', 'Klf2', 'Klf4',
              'Klf5', 'Zfp42', 'Lefty1', 'Lefty2', 'T',
              'Foxa2', 'Gata4', 'Gata6', 'Pdgfra', 'Eomes',
              'Otx2', 'Bmp4', 'Fgf5', 'Bmp4', 'Pax6', 'Lif', 'Lifr')]
+lineage_marker <- lineage_marker[c('Nanog', 'Pou5f1', 'Sox2', 'Klf2', 'Klf4',
+             'Klf5', 'Zfp42',
+             'Foxa2', 'Gata4', 'Eomes',
+             'Otx2', 'Bmp4', 'Fgf5', 'Bmp4')]
 lineage_marker <- lineage_marker[!duplicated(lineage_marker)]
 
+#pdf('fpkms.pdf')# {{{
 pdf('fpkms.pdf')# {{{
 condition <- unlist(mclapply(c('Epi'), function(i)grep(i,colnames(fpkms))))
 for (x in names(markers)[6:14]) {
@@ -128,9 +144,17 @@ for (x in names(markers)[6:14]) {
        plot_fpkm(f, markers[[x]], de, x, what='p1')
 }
 
-condition <- unlist(mclapply(c('2i', '_Lif', 'Epi'), function(i)grep(i,colnames(fpkms))))
+#condition <- unlist(mclapply(c('2i', '_Lif'), function(i)grep(i,colnames(fpkms))))
+condition <- unlist(mclapply(c('2i', 'Epi'), function(i)grep(i,colnames(tpm))))
+lineage_marker = lineage_marker[c('Klf4', 'Klf5', 'Nanog', 'Pou5f1', 'Sox2', 'Zfp42')]
 f <- fpkms[as.character(lineage_marker), condition]
-plot_fpkm(f, lineage_marker, de, '', what='p2')
+f <- tpm[as.character(lineage_marker), condition]
+pdf('poster-tpm.pdf')
+pdf('fpkms_for_talk.pdf')
+#plot_fpkm(f, lineage_marker, de, '', what='p2')
+#plot_fpkm(f, lineage_marker, de_mine, '', what='p2')
+plot_fpkm(f, lineage_marker, de_0.05, '', what='p1')
+dev.off()
 
 grid.newpage()
 condition <- unlist(mclapply(c('2i', '_Lif'), function(i)grep(i,colnames(fpkms))))

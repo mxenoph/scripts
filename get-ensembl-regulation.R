@@ -16,6 +16,12 @@ parser$add_argument('-f', '--filter', required='True', help= "keyword to filter 
 
 args = parser$parse_args()
 ncores = args$threads
+
+if(FALSE){
+    args = list()
+    args$gtf = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.75.gtf"
+    args$etable = "http://Sep2015.archive.ensembl.org/info/website/archives/assembly.html"
+}# }}}
 # }}}
 
 get_ensembl_regulatory = function(filters, values, archive = NULL, organism = NULL, output = NULL, gtf_eversion = NULL){ # {{{
@@ -26,10 +32,7 @@ get_ensembl_regulatory = function(filters, values, archive = NULL, organism = NU
 
     # Ensembl regulatory build was introduced in e73 from September 2013. 
     # If archive version requested is older stop the script with a message
-    if(as.Date(paste('01', gsub("(^|[[:space:]])([[:alpha:]])", "\\1\\U\\2",
-                                substr(gsub("\\..*", '', archive), 1, 3), perl=T),
-                     substr(gsub("\\..*", '', archive), 4, 8), collapse = ' '),
-               format="%d %b %Y") < as.Date('01 Sep 2013', format="%d %b %Y")) stop('Archived ensembl version does not have regulatory build')
+    if(as.numeric(gtf_eversion) < 73) stop('Archived ensembl version does not have regulatory build')
 
     attr_to_get = list('regulatory_feature' =  c("regulatory_stable_id",
                                                  "bound_seq_region_start", "bound_seq_region_end",
@@ -45,10 +48,7 @@ get_ensembl_regulatory = function(filters, values, archive = NULL, organism = NU
 
     dataset_prefix = 'regulatory_feature'
     # Dataset names change from '_feature_set' in Dec 2014 to '_regulatory_feature' in Mar 2015
-    if(as.Date(paste('01', gsub("(^|[[:space:]])([[:alpha:]])", "\\1\\U\\2",
-                                substr(gsub("\\..*", '', archive), 1, 3), perl=T),
-                     substr(gsub("\\..*", '', archive), 4, 8), collapse = ' '),
-               format="%d %b %Y") < as.Date('01 Mar 2015', format="%d %b %Y")) dataset_prefix = 'feature_set'
+    if(as.numeric(gtf_eversion) < 79) dataset_prefix = 'feature_set'
 
     so_accession = data.frame(so_accession = c('SO:0001952', 'SO:0001974',
                                                'SO:0000235', 'SO:0000167',
@@ -63,7 +63,11 @@ get_ensembl_regulatory = function(filters, values, archive = NULL, organism = NU
                    dataset_prefix = 'feature_set'
                    if(grepl('2015', x))  dataset_prefix = 'regulatory_feature'
                    ensembl = useMart(host = x, biomart = 'ENSEMBL_MART_FUNCGEN', dataset = paste(organism, dataset_prefix, sep = '_'))
-                   regulatory_features = getBM(attributes = attr_to_get[[dataset_prefix]],
+#                   regulatory_features = getBM(attributes = attr_to_get[[dataset_prefix]],
+#                                               mart = ensembl)
+               })
+    y = lapply(x, function(i){
+                   regulatory_features = getbm(attributes = attr_to_get[[dataset_prefix]],
                                                mart = ensembl)
                })
 
@@ -123,7 +127,8 @@ main = function(){# {{{
                                      organism = organism,
                                      output = target,
                                      filters = dictionary[[index]]$filters,
-                                     values = dictionary[[index]]$values)
+                                     values = dictionary[[index]]$values,
+                                     gtf_eversion = gtf_eversion)
     } else {
         warning("The filter provided is not included in the dictionary. Update script and run again\n")
     }

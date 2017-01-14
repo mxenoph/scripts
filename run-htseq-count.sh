@@ -1,52 +1,86 @@
 #!/usr/bin/env bash
 
-# Parse arguments#{{{
-ARGS=$(getopt -o a:b:o:t:: -l "annotation:,bam:,options::,type::" -n "run-htseq-count.sh" -- "$@")
+usage() { echo "Usage: $0 [-a <gtf>] [-b <sorted bam>] [-f <feature (default=exon)>] [-o <output path>] [-p <parameters (default= -m union -q)>] [-s <sample name (default=basename)>] [-l <boolean; TRUE for pe library>]" 1>&2; exit 1; }
+# : means takes an argument but not mandatory (if mandatory will have to check after)
+LIBRARY=false
 
-# Bad arguments
-if [ $? -ne 0 ]
-then
-    exit 1
-fi
-eval set -- "$ARGS"
-
-while true
+options=':a:b:f:o:p:s:l'
+while getopts $options option
 do
-    case "$1" in
-        -a | --annotation)
-            gtf="$2"; shift 2 ;;
-        -b | --bam)
-            bam="$2" shift 2 ;;
-        -o | --options)
-            case "$2" in
-                "")
-                    opt='-m union -q'; shift 2 ;;
-                *)
-                    opt="$2"; shift 2 ;;
-            esac ;;
-        -t | --type)
-            case "$2" in
-                "")
-                    feature='exon'; feature_id='gene_id'; shift 2 ;;
-                *)
-                    feature="$2"; feature_id=$feature"_id"; shift 2 ;;
-            esac ;;
-        --)
-            shift ; break ;;
-        *) echo "Error! Invalid option provided"; exit 1 ;;
+    case $option in
+        a ) gtf=(${OPTARG}) ;;
+        b ) bam=${OPTARG} ;;
+        f ) FEATURE=${OPTARG} ;;
+        o ) OUT=${OPTARG} ;;
+        #need to remove the param option
+        p ) PARAM=${OPTARG} ;;
+        s ) SAMPLE=${OPTARG} ;;
+        l ) LIBRARY=true ;;
+        h ) usage ;;
+        : ) echo "Missing option argument for -$OPTARG" >&2; usage ;;
+        \?) echo "Unknown option: -$OPTARG" >&2; usage ;;
+        * ) usage ;;
     esac
-done #}}}
+done
+shift $((OPTIND-1))
 
-target_dir="$(dirname "$bam")/htseq"
-target_base="$(basename "$bam")"
-
-output="$target_dir/${target_base/.bam/.counts}"
-if [ $feature != "exon" ]
+# Check that mandatory arguments were provided
+# -z gives true if string is empty
+if [ -z "$gtf" ] || [ -z "$bam" ]
 then
-    output="$target_dir/${target_base/.bam/.${feature}.counts}"
+    usage
 fi
 
-mkdir -p "$target_dir"
+
+# Controlling output directory#{{{
+if [ ! -z "$OUT" ]
+then
+    if [[ ! $OUT =~ \/counts$ ]]
+    then 
+        OUT="$(readlink -m ${OUT})/counts"
+        mkdir -p $OUT
+    fi
+else
+    OUT="$(dirname ${bam})/counts"
+fi
+#}}}
+
+options='-m union -q -f bam'
+# Controlling default parameters#{{{
+if [ ! -z "$PARAM" ]
+then
+    options="$options -s $PARAM"
+fi
+
+if [ ${LIBRARY} == true ]
+then
+    options="$options -r name"
+else
+    options="$options -r pos"
+fi
+
+# -n gives true if string is not empty
+if [ -n "$FEATURE" ] && [ "$FEATURE" != "exon" ]
+then
+    FEATURE="-t ${FEATURE} -i ${FEATURE}_id"
+else
+    FEATURE='-t exon -i gene_id'
+fi
+#}}}
+
+#PARAM="$PARAM $FEATURE"
+options="$options $FEATURE"
+
+# Controlling output name#{{{
+if [ ! -n "$SAMPLE" ]
+then
+    target="${OUT}/$(basename ${bam/.bam/.counts})"
+else
+    target="${OUT}/${SAMPLE}.counts"
+fi
+#}}}
+
+bam="$(readlink -m ${bam})"
 
 # HTSeq-count Options:#{{{
 # -m <mode> either uniion, intersection strict, intersection-noempty; default:union
@@ -58,8 +92,9 @@ mkdir -p "$target_dir"
 # opt="-m intersection-nonempty -q -i enhancer_id"#}}}
 
 htseq-count \
-    "$opt" \
-    -t "$feature" -i "$feature_id" \
-    "$bam" "$annotation" \
-    > "$output"
+    ${options} \
+    ${bam} ${gtf} \
+    > ${target}
 
+# will be printed in the log
+echo "htseq-count ${options} ${bam} ${gtf} > ${target}"

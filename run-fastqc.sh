@@ -4,4 +4,4 @@ target_dir="$(dirname "$1")"/fastqc
 target_base="$(basename "$1")"
 mkdir -p "$target_dir"
 
-echo fastqc -o "$target_base" $1
+/homes/mxenoph/local/fastqc -o "$target_dir" $1

@@ -106,6 +106,7 @@ counts_to_FPKM = function(counts, effective_length){
     }
 }#}}}
 
+# Convert FPKMs to TPM# {{{
 FPKM_to_TPM = function(fpkm){
     if (is.null(dim(counts))){
         exp(log(fpkm) - log(sum(fpkm)) + log(1e6))
@@ -115,12 +116,13 @@ FPKM_to_TPM = function(fpkm){
         rownames(tpm) = rownames(fpkm)
         tpm
     }
-}
+}# }}}
 
 counts_to_EffCounts = function(counts, len, effective_length){
     counts * (len / effective_length)
 }
 
+# Compute effective lengths# {{{
 compute_effective_length = function(feature_length, fragment_length){
     library(dplyr)
     # Useful discussion in https://groups.google.com/forum/embed/#!topic/rsem-users/gDh0OBLK6_4
@@ -133,4 +135,4 @@ compute_effective_length = function(feature_length, fragment_length){
     rownames(x) = rownames(feature_length)
     return(x)
 }
-
+# }}}

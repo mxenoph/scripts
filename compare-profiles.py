@@ -18,15 +18,21 @@ from gffutils.helpers import asinterval# }}}
 
 # Parsing command line arguments and creating output subdirectories# {{{
 parser = argparse.ArgumentParser()
-
+# Required arguments
 parser.add_argument('-i', '--ip', nargs='+', metavar="file", type=str, required=True, help= 'One or more treated(IP) bam files')
 parser.add_argument('-c', '--ctrl', nargs='+', metavar="file", type=str, required=True, help= 'Control bam files')
+parser.add_argument('-o', '--out_dir', metavar="path", type=str, required=True)
+# Default arguments
 parser.add_argument('-a', '--assembly', type=str, default='mm9', help= 'Assembly for the ensembl annotation. Default = mm9')
+parser.add_argument('-l', '--label', type=str, required=False, default= strftime("%Y-%m-%d-%Hh%Mm", gmtime()), help= 'Label to be used in plottting output file')
+# Optional arguments
 parser.add_argument('-f', '--gtf', metavar="file", type=str, required=False, help= 'Alternative feature gtf')
+parser.add_argument('--left', metavar="file", type=str, required=False, help= 'Alternative feature gtf, left boundary')
+parser.add_argument('--right', metavar="file", type=str, required=False, help= 'Alternative feature gtf, right boundary')
 parser.add_argument('-e', '--expr', metavar="file", type=str, required=False, help= 'Deseq output file')
 parser.add_argument('-b', '--bound', metavar="file", type=str, required=False, help= 'TSV file with gene_id (ensembl) and bound (1/0) fields')
-parser.add_argument('-l', '--label', type=str, required=False, default= strftime("%Y-%m-%d-%Hh%Mm", gmtime()), help= 'Label to be used in plottting output file')
-parser.add_argument('-o', '--out_dir', metavar="path", type=str, required=True)
+parser.add_argument('-s', '--order', type=str, required=False, help= 'Keep order of features provided')
+parser.add_argument('-w', '--overwrite', type=str, required=False, help= 'If .npz file already there, force to run and overwrite')
 
 args = parser.parse_args()
 
@@ -65,7 +71,7 @@ def tss_generator():# {{{
             yield TSS(asinterval(transcript), upstream=1000, downstream=1000)# }}}
 
 # Create arrays in parallel, and save to disk for later
-def calc_signal ( ip, ctrl, anchor, basename):# {{{
+def calc_signal (ip, ctrl, anchor, basename):# {{{
     "This counts mapped reads for ip and input and normalizes them by library size and million mapped reads"
     from metaseq import persistence
     import multiprocessing
@@ -73,7 +79,7 @@ def calc_signal ( ip, ctrl, anchor, basename):# {{{
     
     out = basename + '.npz'
     # Run if file does not exist and experiment has no replicates
-    if not os.path.exists(out):
+    if not os.path.exists(out) or args.overwrite:
         # Create arrays in parallel
         ip_array = ip_signal.array(anchor, bins=100, processes=processes)
         input_array = input_signal.array(anchor, bins=100, processes=processes)
@@ -228,6 +234,7 @@ def signal_bound(norm_sub, subset, window, pp, **kwargs):# {{{
                 x,
                 features=tsses,
                 vmin=5, vmax=95, percentile=True,
+                # axis=1 means that mean is calculated on the rows
                 sort_by=normalized_subtracted.mean(axis=1),
                 subset_by= subset_by,
                 subset_order=subset_order,
@@ -312,8 +319,17 @@ tsses = pybedtools.BedTool(tss_filename)
 if args.gtf:
     alternative_features = pybedtools.BedTool(args.gtf)
 
+# If alternative features passed then create the object
+if args.left:
+    left_bound = pybedtools.BedTool(args.left)
+# If alternative features passed then create the object
+if args.right:
+    right_bound = pybedtools.BedTool(args.right)
+
 norm_sub = dict()
 norm_sub_alt_feat = dict()
+norm_sub_left = dict()
+norm_sub_right = dict()
 
 # Create genomic_signal objects that point to data files
 for i in range(len(args.ip)):
@@ -322,6 +338,7 @@ for i in range(len(args.ip)):
     input_filename = args.ctrl[i]
     print ip_filename
     print input_filename
+    print base
 
     ip_signal = metaseq.genomic_signal(ip_filename, 'bam')
     input_signal = metaseq.genomic_signal(input_filename, 'bam')
@@ -342,7 +359,7 @@ for i in range(len(args.ip)):
         print "Only computing enrichment around the TSS."
     else:
         print 'Computing for alternative features'
-        gtf_base = base + '.alternative_features'
+        gtf_base = base + args.label
 
         from joblib import Parallel, delayed
         import multiprocessing
@@ -362,6 +379,57 @@ for i in range(len(args.ip)):
         normalized_subtracted = arrays['ip'] - arrays['input']
         norm_sub_alt_feat[ip_filename] = normalized_subtracted # }}}
 
+    try:# {{{
+        left_bound
+    except:
+        print "Not computing enrichment for left boundary."
+    else:
+        print 'Computing for alternative features'
+        gtf_base = base + args.label + '.left_bound'
+
+        from joblib import Parallel, delayed
+        import multiprocessing
+        inputs = range(1, len(left_bound))
+        processes = multiprocessing.cpu_count()
+        
+        # returns the width of a range (i) in the pybedtool object
+        def interval_width(i, bedtool):
+            return len(bedtool[i])
+
+        widths = Parallel(n_jobs = processes)(delayed(interval_width)(i, left_bound) for i in inputs)
+        window = most_common(widths)
+        
+        calc_signal(ip_signal, input_signal, left_bound, gtf_base)
+        features, arrays = persistence.load_features_and_arrays(prefix = gtf_base)
+        # Normalize IP to the control
+        normalized_subtracted = arrays['ip'] - arrays['input']
+        norm_sub_left[ip_filename] = normalized_subtracted # }}}
+    
+    try:# {{{
+        right_bound
+    except:
+        print "Not computing enrichment for right boundary."
+    else:
+        print 'Computing for alternative features'
+        gtf_base = base + args.label + '.right_bound'
+
+        from joblib import Parallel, delayed
+        import multiprocessing
+        inputs = range(1, len(right_bound))
+        processes = multiprocessing.cpu_count()
+        
+        # returns the width of a range (i) in the pybedtool object
+        def interval_width(i, bedtool):
+            return len(bedtool[i])
+
+        widths = Parallel(n_jobs = processes)(delayed(interval_width)(i, right_bound) for i in inputs)
+        window = most_common(widths)
+        
+        calc_signal(ip_signal, input_signal, right_bound, gtf_base)
+        features, arrays = persistence.load_features_and_arrays(prefix = gtf_base)
+        # Normalize IP to the control
+        normalized_subtracted = arrays['ip'] - arrays['input']
+        norm_sub_right[ip_filename] = normalized_subtracted # }}}
 # }}}
 
 # Plotting ## {{{
@@ -388,7 +456,46 @@ else:
     window = most_common(widths)
     
     pp.savefig(plot_norm_signals(norm_sub_alt_feat, 'midpoint', window)) # }}}
+
+
+try:# {{{
+    left_bound
+except:
+    print "Only computing enrichment around the TSS."
+else:
+    from joblib import Parallel, delayed
+    import multiprocessing
+    inputs = range(1, len(left_bound))
+    processes = multiprocessing.cpu_count()
     
+    # returns the width of a range (i) in the pybedtool object
+    def interval_width(i, bedtool):
+        return len(bedtool[i])
+
+    widths = Parallel(n_jobs = processes)(delayed(interval_width)(i, left_bound) for i in inputs)
+    window = most_common(widths)
+    
+    pp.savefig(plot_norm_signals(norm_sub_left, 'Peak left boundary', window)) # }}}
+
+try:# {{{
+    right_bound
+except:
+    print "Only computing enrichment around the TSS."
+else:
+    from joblib import Parallel, delayed
+    import multiprocessing
+    inputs = range(1, len(right_bound))
+    processes = multiprocessing.cpu_count()
+    
+    # returns the width of a range (i) in the pybedtool object
+    def interval_width(i, bedtool):
+        return len(bedtool[i])
+
+    widths = Parallel(n_jobs = processes)(delayed(interval_width)(i, right_bound) for i in inputs)
+    window = most_common(widths)
+    
+    pp.savefig(plot_norm_signals(norm_sub_right, 'Peak right boundary', window)) # }}}
+
 if args.expr:
     from metaseq.results_table import DESeqResults
     expr = DESeqResults(args.expr, import_kwargs=dict(index_col=0))

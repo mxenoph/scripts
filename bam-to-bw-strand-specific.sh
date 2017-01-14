@@ -19,7 +19,7 @@ scaleArgs=$4
 sortedFile=$inFile.sorted.tmp.bed
 fwFile=$inFile.fw.bed
 revFile=$inFile.rev.bed
-
+output_dir=$(dirname "${inFile}")
 
 # Make sorted bed file
 # The '-1' option has to do with the protocol the library was made (similar to the HTSeqCount option -s reverse) | remove it or keep it accordingly
@@ -27,12 +27,12 @@ samtools view $inFile | $SAM_TO_BED_SCRIPT -m -s '-1' | sort -k1,1 -k2,2n >$sort
 
 # + strand
 awk '{if($6=="+") { print $0 }}' $sortedFile > $fwFile
-bedItemOverlapCount -chromSize=$sizesFile -outBounds -bed12 null $fwFile | $SCALE_SCRIPT $scaleArgs |  wigToBigWig stdin $sizesFile ${baseFn}_fwd.bw
+bedItemOverlapCount -chromSize=$sizesFile -outBounds -bed12 null $fwFile | $SCALE_SCRIPT $scaleArgs |  wigToBigWig stdin $sizesFile ${output_dir}/${baseFn}_fwd.bw
 
 
 # - strand
 awk '{if($6=="-") { print $0 }}' $sortedFile > $revFile
-bedItemOverlapCount -chromSize=$sizesFile -outBounds -bed12 null $revFile | $SCALE_SCRIPT $scaleArgs | wigToBigWig stdin $sizesFile ${baseFn}_rev.bw
+bedItemOverlapCount -chromSize=$sizesFile -outBounds -bed12 null $revFile | $SCALE_SCRIPT $scaleArgs | wigToBigWig stdin $sizesFile ${output_dir}/${baseFn}_rev.bw
 
 rm $sortedFile
 rm $fwFile

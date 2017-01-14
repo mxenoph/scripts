@@ -21,7 +21,7 @@ function qc () {
     mkdir -p ${path}
     target=$(basename ${fastq%%.*})
     echo $target
-    fastqc -o ${path} ${fastq}
+    ~/local/fastqc -o ${path} ${fastq}
 
     seq_qual=$(sed -n 2p ${path}/${target}_fastqc/summary.txt | cut -f 1)
     if [[ ${seq_qual} == "FAIL" ]]

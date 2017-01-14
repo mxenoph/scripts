@@ -17,6 +17,14 @@ parser$add_argument('-a', '--anno', default = "NA", help= "Rename the merged ran
 
 args = parser$parse_args()
 
+if(FALSE){
+    args = list()
+    args$bed = c("mm10/macs2/sharp/7E12_2i-M2_pooled_filtered_peaks.narrowPeak", "mm10/macs2/sharp/7E12_2i-Chd4_pooled_filtered_peaks.narrowPeak")
+    args$threads = 4
+    args$output_path = "mm10/merged-ranges"
+    args$label = 'NA'
+}
+
 plot_path = file.path(args$output_path, "plots")
 dir.create(plot_path, recursive= TRUE)
 
@@ -35,6 +43,27 @@ import_narrowPeak_df = function(narrow) {# {{{
     names(df) = c('chr', 'start', 'end', 'name', 'score', 'strand', 'fe', 'pvalue', 'qvalue', 'summit')
     return(df)
 }
+
+import_broadPeak_df = function(broad){# {{{
+    x = c('dplyr','GenomicRanges')
+    lapply(x, suppressMessages(library), character.only=T)
+    
+    if (grepl('track', readLines(broad, n=1))){
+        to_skip = as.numeric(system(paste0("awk '/track/ {print NR}' <", broad), intern = T))
+        # check if vector is sequential and increasing!
+        if(! all(diff(to_skip) == 1)) stop("File contains more than one track line. Lines not sequential so don't know how to skip them. Inspect the file. ")
+
+        # File contains track line for ucsc which we skip
+        df = read.table(broad, header=F, skip=last(to_skip))
+    } else {
+        # contains both the broad region and narrow peak
+        df = read.table(broad, header=F)
+    }
+    
+    names(df) = c('chr', 'start', 'end', 'name', 'score', 'strand', 'fe', 'pvalue', 'qvalue')
+    return(df)
+}
+# }}}
 
 import_bed_df = function(bed) {# {{{
     x = c('dplyr','GenomicRanges')
@@ -139,44 +168,44 @@ get_merged = function(input_granges, min_ov = 0){
     return(GRangesList('annotated' = merged_ranges, 'merged' = multiple_peaks, 'single' = single_peaks))
 } # }}}
 
-    # Make venn count table# {{{
-    make_venn_cnt = function(granges){
-        stopifnot(is(granges, "GenomicRanges"))
-        stopifnot(any(grepl('name', colnames(mcols(granges)))))
+# Make venn count table# {{{
+make_venn_cnt = function(granges){
+    stopifnot(is(granges, "GenomicRanges"))
+    stopifnot(any(grepl('name', colnames(mcols(granges)))))
 
-        sets = levels(as.factor(unlist(mcols(granges)$name)))
-        columns = sets[grep('_AND_', sets, invert=T)]
-        x = lapply(1:length(columns), function(x) c(0,1))
-        names(x) = columns
-        mat = expand.grid(x)
-        # expand.grid always puts the (0 0 0) case first
-        Counts = c(0)
-        for(i in 2:nrow(mat)){
-            current_TF = columns[as.logical(unlist(mat[i,]))]
-            if(length(current_TF) == 1) {
-                regex = paste0("^", current_TF, "$")
-                counts_table = table(grepl(regex, mcols(granges)$name))
-                # if no single peaks for that TF, table will not have a TRUE element
-                # so set the count to 0 like this
-                if (! TRUE %in% names(counts_table)) {
-                    Counts = c(Counts, 0)
-                } else {
-                    Counts = c(Counts, counts_table[['TRUE']])
-                }
+    sets = levels(as.factor(unlist(mcols(granges)$name)))
+    columns = sets[grep('_AND_', sets, invert=T)]
+    x = lapply(1:length(columns), function(x) c(0,1))
+    names(x) = columns
+    mat = expand.grid(x)
+    # expand.grid always puts the (0 0 0) case first
+    Counts = c(0)
+    for(i in 2:nrow(mat)){
+        current_TF = columns[as.logical(unlist(mat[i,]))]
+        if(length(current_TF) == 1) {
+            regex = paste0("^", current_TF, "$")
+            counts_table = table(grepl(regex, mcols(granges)$name))
+            # if no single peaks for that TF, table will not have a TRUE element
+            # so set the count to 0 like this
+            if (! TRUE %in% names(counts_table)) {
+                Counts = c(Counts, 0)
             } else {
-                tmp = paste(mixedsort(current_TF), collapse = "_AND_")
-                regex = paste0("^", tmp, "$")
-                counts_table = table(grepl(regex, mcols(granges)$name))
-                if (! TRUE %in% names(counts_table)) {
-                    Counts = c(Counts, 0)
-                } else {
-                    Counts = c(Counts, counts_table[['TRUE']])
-                }
+                Counts = c(Counts, counts_table[['TRUE']])
+            }
+        } else {
+            tmp = paste(mixedsort(current_TF), collapse = "_AND_")
+            regex = paste0("^", tmp, "$")
+            counts_table = table(grepl(regex, mcols(granges)$name))
+            if (! TRUE %in% names(counts_table)) {
+                Counts = c(Counts, 0)
+            } else {
+                Counts = c(Counts, counts_table[['TRUE']])
             }
         }
-        mat = cbind(mat, Counts)
-        return(mat)
-    }# }}}
+    }
+    mat = cbind(mat, Counts)
+    return(mat)
+}# }}}
 
 main = function(){# {{{
     source("/homes/mxenoph/source/Rscripts/granges-functions.R")
@@ -210,8 +239,10 @@ main = function(){# {{{
                     tmp = protein_data %>% filter(protein_data == x) %>% unite(id, condition, protein, sep="-") %>% select(id) %>% .[[1]]
                     if(grepl('.bed', as.character(x))){
                         x = import_bed_df(as.character(x))
-                    } else {
+                    } else if(grepl('.narrowPeak', as.character(x))) {
                         x = import_narrowPeak_df(as.character(x))
+                    } else{
+                        x = import_broadPeak_df(as.character(x))
                     }
                     x = x[,1:6]
                     tmp = rep(tmp, nrow(x))
@@ -239,7 +270,7 @@ main = function(){# {{{
         merged = get_merged(gr0)
     }# }}}
 
-    # Computing and plotting venn diagram# {{{
+# Computing and plotting venn diagram# {{{
 #    granges = merged$annotated
 #    venn_cnt = make_venn_cnt(granges)
     venn_cnt = make_venn_cnt(merged$annotated)
@@ -267,6 +298,7 @@ main = function(){# {{{
         # ellipses only work for 4 sets and easier to read than chowRusjey so draw that too
         plot(v[['vn']], doWeights=FALSE, type="ellipses", gp = v[['theme']])
     } else {
+         library(UpSetR)
 #        plot(v[['vn']], doWeights=T, type="ChowRuskey",  gp = v[['theme']])
         upsetR_cnt = do.call(rbind, apply(venn_cnt, 1, function(x) {
                                               if(x['Counts'] != 0){

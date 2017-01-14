@@ -137,7 +137,7 @@ then
     # Do not remove these files as 
     bedGraphToBigWig ${OUT}/${target}_treat_pileup.bdg ${chrom_sizes} ${OUT}/${target}_treat_pileup.bw
     bedGraphToBigWig ${OUT}/${target}_control_lambda.bdg ${chrom_sizes} ${OUT}/${target}_control_lambda.bw
-    # rm ${OUT}/${target}_treat_pileup.bdg ${OUT}/${target}_control_lambda.bdg ${OUT}/${target}_subtract.bdg
+    rm ${OUT}/${target}_treat_pileup.bdg ${OUT}/${target}_control_lambda.bdg ${OUT}/${target}_subtract.bdg ${OUT}/${target}_logFE.bdg
 
 fi
 

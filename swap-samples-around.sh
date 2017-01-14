@@ -12,22 +12,23 @@ for x in "${!swapped[@]}"
 do 
     y=${swapped[${x}]}
     echo "${x} is really ${y}"
-    #samtools view -H mm10/bowtie/${x}.bam | sed "s/$x/$y/g" > ${y}.sam_header
-    #samtools view mm10/bowtie/${x}.bam > ${y}.sam_main
-    #cat ${y}.sam_header ${y}.sam_main > ${y}.sam
-    #samtools view -bSo ${y}.bam ${y}.sam
-    mv mm10/bowtie/${x}.bam mm10/bowtie/swapped/
-    mv ${y}.bam mm10/bowtie/
+#    samtools view -H mm10/bowtie/${x}.bam | sed "s/$x/$y/g" > ${y}.sam_header
+#    samtools view mm10/bowtie/${x}.bam > ${y}.sam_main
+#    cat ${y}.sam_header ${y}.sam_main > ${y}.sam
+#    samtools view -bSo ${y}.bam ${y}.sam
+#    mv mm10/bowtie/${x}.bam mm10/bowtie/swapped/
+#    mv ${y}.bam mm10/bowtie/
 
-    cp mm10/bowtie/${x}.stderr mm10/bowtie/swapped/
-    cp mm10/bowtie/swapped/${x}.stderr mm10/bowtie/${y}.stderr
-
-    # Saving the old files to a dir as I can not rename in one go
-    mv data/${x}.fastq.gz data/swapped/${x}.fastq.gz
+#    cp mm10/bowtie/${x}.stderr mm10/bowtie/swapped/
+#    cp mm10/bowtie/swapped/${x}.stderr mm10/bowtie/${y}.stderr
+#
+#    # Saving the old files to a dir as I can not rename in one go
+#    mv data/${x}.fastq.gz data/swapped/${x}.fastq.gz
 done
 
 for x in "${!swapped[@]}"
 do 
+    y=${swapped[${x}]}
     # doing this in a second loop as if doing all in one will result in overwriting
     # files that have not been changed yet
     cp data/swapped/${x}.fastq.gz data/${y}.fastq.gz

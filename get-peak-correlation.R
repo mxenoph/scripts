@@ -14,6 +14,13 @@ args = parser$parse_args()
 output_path = file.path(args$out)
 plot_path = file.path(output_path, 'plots')
 dir.create(plot_path, recursive= TRUE)
+
+if(FALSE){
+    args = list()
+    args$config = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/for_poster/../../config/tf_modifications_mm10_esc-episc.conf'
+    args$out = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/for_poster'
+    args$label = 'esc-episc-mods'
+}
 # }}}}
 
 x = c('GenomicRanges', 'rtracklayer', 'plyr', 'tools', 'corrplot')
@@ -81,24 +88,37 @@ conf = read.table(args$config, header=T, sep="\t")
 factors = as.character(apply( conf[ , c('Condition', 'factor') ] , 1 , paste , collapse = ":" ))
 factors = toupper(factors)
 
+source("~/source/Rscripts/granges-functions.R")
 peaks = GRangesList() # {{{
 for (indx in 1:length(conf[['file']])) {
 #    if (grepl('peaks', as.character(conf[['file']])[indx])){
 #        print(as.character(conf[['file']])[indx])
 #        ranges = import.bed(as.character(conf[['file']])[indx])
 #    } else{
-        tmp = read.table(as.character(conf[['file']])[indx], header=F, sep="\t")
-        ranges = GRanges(seqnames=tmp[,1], IRanges(start= tmp[,2], end= tmp[,3]), strand="*")
+    # skipping ucsc track line
+#    if (grepl('track', readLines(as.character(conf[['file']])[indx], n=1))){
+#        tmp = read.table(as.character(conf[['file']])[indx], header=F, sep="\t", skip=1)
+#    } else{
+#        tmp = read.table(as.character(conf[['file']])[indx], header=F, sep="\t")
+#    }
+#        ranges = GRanges(seqnames=tmp[,1], IRanges(start= tmp[,2], end= tmp[,3]), strand="*")
 #        head(ranges)
 #    }
+     if(grepl('.bed', as.character(as.character(conf[['file']])[indx]))){
+         ranges = rtracklayer::import.bed(as.character(conf[['file']])[indx])
+     } else{
+         ranges = match.fun(paste('import', file_ext(as.character(conf[['file']])[indx]), sep = '_'))(as.character(conf[['file']])[indx])
+         if(file_ext(as.character(conf[['file']])[indx]) == 'gappedPeak') ranges = ranges$blocks[width(ranges$blocks) > 10]
+     }
+    
     # Getting rid of tags in contigs if present
     ranges = ranges[seqnames(ranges) %in% seqlevels(ranges)[grep('chr', seqlevels(ranges))]]
 
     if (duplicated(factors)[indx]) {
         # merging multiple data sets for the same factor
-        peaks[[factors[indx]]] = c(peaks[[factors[indx]]], ranges)
-      } else {
-          peaks = c(peaks, GRangesList(ranges))
+        peaks[[factors[indx]]] = c(peaks[[factors[indx]]], reduce(ranges))
+    } else {
+          peaks = c(peaks, GRangesList(reduce(ranges)))
           names(peaks)[length(peaks)] = factors[indx]
     }
 }
@@ -124,7 +144,7 @@ for (indx in 1:length(names(peaks))) {
 
 # Set correlation matrix colours and plotting parameters# {{{
 col = rev(c("#67001F", "#B2182B", "#D6604D", "#F4A582", "#FDDBC7","#FFFFFF", "#D1E5F0", "#92C5DE", "#4393C3", "#2166AC", "#053061"))
-op = par(family="serif")# }}}
+#op = par(family="serif")# }}}
 
 # Calculate correlation# {{{
 M = cor(all_peaks_binary)
@@ -167,8 +187,9 @@ pdf(file.path(plot_path, paste0(args$label, "-CorrelationPlot.pdf")), paper='a4'
     rownames(M) = gsub(".*:", "", rownames(M))
     corrplot(M, method="color",
              order="hclust", tl.col=tlcol, tl.cex=0.5,
-             addrect=9, col=colorRampPalette(col)(200))
-    legend('topright', names(label), text.col=as.character(label), bty='n')# }}}
+             addrect=6, col=colorRampPalette(col)(200))
+    legend('topright', names(label), text.col=as.character(label), bty='n')
+    # }}}
 
     corrplot.mixed(M, lower = "color", upper = "number", # {{{
 #             order="original", tl.col=tlcol, tl.cex=0.3, tl.srt=45,
@@ -180,12 +201,14 @@ pdf(file.path(plot_path, paste0(args$label, "-CorrelationPlot.pdf")), paper='a4'
     # Combine with a significant test. Provide the matrix of correlation but also a matrix of p-val for all correlations computed# {{{# {{{
     # sig.level is the top value a p-val is considered significant
     corrplot(M, p.mat= p_values[[1]], sig.level=p_cutoff,
-             order="hclust", method="color", type="lower",
+             order="hclust", method="color", #type="lower",
              tl.col=tlcol, tl.cex=0.5,
              insig="pch", pch.cex=0.7,
-             addrect=4, col=colorRampPalette(col)(200))
-    legend('topright', c(names(label), paste0('Confidence level: ', conf_level, ", p-val < ", p_cutoff)),
-           text.col=c(as.character(label), 'black'), bty='n')# }}}# }}}
+             addrect=6, col=colorRampPalette(col)(200))
+    legend('topright', names(label), text.col=as.character(label), bty='n')
+    #legend('topright', c(names(label), paste0('Confidence level: ', conf_level, ", p-val < ", p_cutoff)),
+    #       text.col=c(as.character(label), 'black'), bty='n')
+    # }}}# }}}
 
     #corrplot(M, method="color", type="lower",# {{{
     #         order="FPC", tl.col="black", tl.cex=0.5, 
