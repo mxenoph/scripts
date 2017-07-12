@@ -246,7 +246,8 @@ main = function(){# {{{
                     }
                     x = x[,1:6]
                     tmp = rep(tmp, nrow(x))
-                    x %>% mutate(protein = tmp) })
+                    # Handles peaks that are reported multiple times due to multiple summits
+                    x %>% mutate(protein = tmp) %>% group_by(chr, start, end) %>% slice(1:1) %>% ungroup })
 # }}}
 
     # keep all peaks in one GRange object and find all overlaps# {{{
