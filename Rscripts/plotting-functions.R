@@ -100,7 +100,7 @@ venn_counts2venn <- function(venn_cnt){
     weight = venn_cnt[,"Counts"]
     names(weight) <- apply(venn_cnt[,1:n], 1, paste, collapse="")
 
-    vn <- Venn(SetNames = set_names, Weight = weight)
+    vn = Venn(SetNames = set_names, Weight = weight)
     c_vn = compute.Venn(vn)
     theme_vn = VennThemes(c_vn)
 
@@ -114,13 +114,17 @@ venn_counts2venn <- function(venn_cnt){
                "#F9B276", "#F8CE63", "#FCC270", "#DAC090")
 
     for (i in 1:length(theme_vn[["Set"]])) {
-        theme_vn[["Set"]][[i]]$col <- cols[i]
-        theme_vn[["SetText"]][[i]]$col <- cols[i]
+        theme_vn[["Set"]][[i]]$col = cols[i]
+        theme_vn[["SetText"]][[i]]$col = cols[i]
+    }
+    for (i in 1:length(theme_vn[["SetText"]])) {
+        theme_vn[["SetText"]][[i]]$fontsize = 28
     }
     for (i in 1:length(theme_vn[["FaceText"]])) {
-        theme_vn[["Face"]][[i]]$col <- shades[i]
-        theme_vn[["Face"]][[i]]$fill <- shades[i]
-        theme_vn[["FaceText"]][[i]]$col <- colors()[295]
+        theme_vn[["Face"]][[i]]$col = shades[i]
+        theme_vn[["Face"]][[i]]$fill = shades[i]
+        theme_vn[["FaceText"]][[i]]$col = colors()[295]
+        theme_vn[["FaceText"]][[i]]$fontsize = 28
     }
 
     sets_faces = names(theme_vn[['Face']])[str_count(names(theme_vn[['Face']]), '1') == 1]
@@ -129,6 +133,8 @@ venn_counts2venn <- function(venn_cnt){
         index = grep(x, sets_faces)
         theme_vn[["Face"]][[x]]$col = theme_vn[['Set']][[index]]$col
         theme_vn[["Face"]][[x]]$fill = theme_vn[['Set']][[index]]$col
+        theme_vn[["Face"]][[x]]$fontsize = 28
+        theme_vn[["FaceText"]][[x]]$fontsize = 28
     }
     return(list(vn = vn, theme = theme_vn, c_vn = c_vn))
 }
