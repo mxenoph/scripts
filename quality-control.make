@@ -60,6 +60,4 @@ $(foreach cn,${correlation_sets},$(eval $(call COR,$(cn))))
 ## Calculate correlation of samples genome wide (not on specific regions)
 correlation: ${sample_correlation} #${correlation_plots}
 # }}}
-
-
 # vim: ft=make
