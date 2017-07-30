@@ -61,22 +61,5 @@ $(foreach cn,${correlation_sets},$(eval $(call COR,$(cn))))
 correlation: ${sample_correlation} #${correlation_plots}
 # }}}
 
-# Filtering blacklisted regions# {{{
-.PHONY: filter-peaks
-## Remove ENCODE blacklisted regions
-filter-peaks: ${filtered_peaks}
 
-${macs_path_sharp}/%_filtered_peaks.narrowPeak: ${macs_path_sharp}/%_peaks.narrowPeak ${blacklist}
-	${bsub} "bedtools intersect -a $< -b ${blacklist} -v > $@"
-
-${macs_path_broad}/%_filtered_peaks.broadPeak: ${macs_path_broad}/%_peaks.broadPeak ${blacklist}
-	${bsub} "bedtools intersect -a $< -b ${blacklist} -v > $@"
-
-${macs_path_broad}/%_filtered_peaks.gappedPeak: ${macs_path_broad}/%_peaks.gappedPeak ${blacklist}
-	${bsub} "bedtools intersect -a $< -b ${blacklist} -v > $@"
-
-${IDR_path}/%_filtered_conservative_${IDR_threshold}.narrowPeak: ${IDR_path}/%_conservative_${IDR_threshold}.narrowPeak ${blacklist}
-	${bsub} "bedtools intersect -a $< -b ${blacklist} -v > $@"
-
-# }}}
 # vim: ft=make
