@@ -35,16 +35,8 @@ fi
 base="$(basename "$ip")"
 # Removing file extension and add macs2
 target="${base%.*}"
-#if [ ${RELAXED} == true ]
-#then
-#    target="${base%.*}_IDR"
-#fi
 
 options=''
-
-# make assembly mandatory and infer genome size/organism initials from that
-#genome=$(sed 's/[0-9]//g' <<< ${assembly} | tr '[:upper:]' '[:lower:]')
-
 
 # If control provided then will pass it to macs#{{{
 if [ ! -z "$CTRL" ]
@@ -66,12 +58,9 @@ then
     if [[ ! $OUT =~ \/macs2$ ]]
     then 
         OUT="$(readlink -m ${OUT})/macs2"
-        #mkdir -p $OUT
     fi
-    #options="$options --outdir $OUT"
 else
     OUT=$PWD/macs2
-    #options="$options --outdir $PWD"
 fi
 #}}}
 
@@ -101,7 +90,6 @@ else
 fi
 #}}}
 
-#mkdir -p $OUT
 options="$options --outdir $OUT"
 # right version of macs is in the virtualenv
 #Run macs
