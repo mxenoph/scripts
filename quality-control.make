@@ -37,21 +37,15 @@ ${qc_path}/plots/%.png: ${qc_path}/%.enrichment
 # }}}
 
 # Correlation # {{{
-correlation := $(call FILTER_OUT,7G9_EpiSC,\
-	$(call FILTER_OUT,Remco,$(addprefix ${coverage_path}/ddup/,$(addsuffix .sample-correlation, ${conditions}))))
-correlation_plots := $(patsubst %.sample-correlation, %.pdf, ${correlation})
-on_sets := $(patsubst %.sample-correlation, %, ${correlation})
-
-.PHONY: correlation
-## Calculate correlation of samples genome wide (not on specific regions)
-correlation: ${correlation} ${correlation_plots}
+# ${sample_correlation} needs to be provided from the project specific makefile, 
+# where any particular filtering is done.
+correlation_sets := $(patsubst %.pdf, %, ${sample_correlation})
 
 define COR
-$(1).sample-correlation: ${bigwig}
-	$(eval per_filter := $(call KEEP,ddup,$(call KEEP,$(notdir $(1)),${bigwig})))
-	@echo $(per_filter) | tr ' ' '\n' > $(1).tmp
+
+$(1).sample-correlation: $(call KEEP,ddup,$(call KEEP,$(notdir $(1)),${bigwig}))
+	@echo $$^ | tr ' ' '\n' > $(1).tmp
 	Rscript -e "a=read.delim('$(1).tmp', stringsAsFactors=F); a=a[[1]]; b=as.data.frame(t(combn(a,2))); write.table(b, '$(1).pairwise-combn', col.names=F, row.names=F, sep=' ', quote=F)"
-	rm $(1).sample-correlation
 	${bsub} run-bigWigCorrelate-on-pairs.sh $(1).pairwise-combn $(1).sample-correlation
 	rm $(1).tmp
 
@@ -60,14 +54,11 @@ $(1).pdf: $(1).sample-correlation
 
 endef
 
-$(foreach cn,${on_sets},$(eval $(call COR,$(cn))))
+$(foreach cn,${correlation_sets},$(eval $(call COR,$(cn))))
 
-.PHONY: correlate
-correlate: ${correlation} ${correlation_plots}
-
-.PHONY: plot-correlation
-plot-correlation: ${correlation_plots}
-
+.PHONY: correlation
+## Calculate correlation of samples genome wide (not on specific regions)
+correlation: ${sample_correlation} #${correlation_plots}
 # }}}
 
 # Filtering blacklisted regions# {{{
