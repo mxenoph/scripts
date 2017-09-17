@@ -30,6 +30,21 @@ preview = function(f) {
     eval(f)
     dev.off()
 }# }}}
+
+#If interactive{{{
+if(FALSE){
+    args = list()
+    args$design = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/star/2pass/counts/library-design.tsv'
+    args$out = '/nfs/research2/bertone/user/mxenoph/hendrich/thesis'
+    args$counts = '/nfs/research2/bertone/user/mxenoph/hendrich/rna/mm10/star/2pass/counts/'
+    args$factors = FALSE
+    args$fragment = 200
+    args$gtf = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/Mus_musculus.GRCm38.70.gtf"
+    args$genome_size = "/nfs/research2/bertone/user/mxenoph/common/genome/MM10/MM10.genome"
+    args$targets = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/from_meryem/feature-annotation/Condition_7E12_EpiSC_Proteins_M2_AND_Chd4_Ov1bp.binding-per-gene.tsv"
+    args$tname = "NuRD Bound"
+}# }}}
+
 # }}}}
 
 x = c('DESeq2', 'dplyr')
@@ -110,6 +125,18 @@ norm_counts = counts(cds, normalized = TRUE)
 write.table(norm_counts,
             file = file.path(output_path, paste0(label, '.normalised-counts.tsv')),
             row.names = T, col.names = T, quote = F, sep = "\t")
+
+# Check if ensembl to gene name file exists otherwise print command to create it and exit# {{{
+# gene_names will be used for TPM plots but used here as to be added as metadata to mcols(dds)
+# That is needed for plotting variable genes in the plot_counts()
+if (! file.exists(paste0(file_path_sans_ext(args$gtf), '.ensembl2gene_name.tsv'))) {
+    command = paste("Rscript ~/source/get-annotation-rscript.R -G", args$gtf, '-p <ncores>', collapse = " ")
+    warning(paste('Annotation GTFs do not exist. Run `', command, '` first.',
+                  'Will now exit script without plotting markers', collapse = ' '))
+} else {
+    gene_names = read.delim(paste0(file_path_sans_ext(args$gtf), '.ensembl2gene_name.tsv'), head = T, sep = "\t")
+}
+# }}}
 
 pdf(file.path(plot_path, paste0(label, '.pdf')), paper='a4')
 # Running DE and plotting# {{{
@@ -200,17 +227,9 @@ tpms = round(counts_to_TPM(cnt4expression, setNames(efflengths[['efflength']], r
 tpms = tpms %>% as.data.frame() %>% add_rownames('Gene')
 write.table(tpms, file.path(output_path, paste0(label, '.raw-count-tpms.tsv')),
             quote = FALSE, row.names = FALSE, sep = "\t")
+
 # For plotting FPKMs or TPMs use log2
 
-# Check if ensembl to gene name file exists otherwise print command to create it and exit# {{{
-if (! file.exists(paste0(file_path_sans_ext(args$gtf), '.ensembl2gene_name.tsv'))) {
-    command = paste("Rscript ~/source/get-annotation-rscript.R -G", args$gtf, '-p <ncores>', collapse = " ")
-    warning(paste('Annotation GTFs do not exist. Run `', command, '` first.',
-                  'Will now exit script without plotting markers', collapse = ' '))
-} else {
-    gene_names = read.delim(paste0(file_path_sans_ext(args$gtf), '.ensembl2gene_name.tsv'), head = T, sep = "\t")
-}
-# }}}
 
 markers = read.table("/nfs/research2/bertone/user/mxenoph/hendrich/markers.txt", header = T, stringsAsFactors = F)
 tmp = apply(markers, 2, function(gene) gene_names %>% filter(external_gene_id %in% gene))
