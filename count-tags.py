@@ -347,6 +347,22 @@ def main():
         if not args.regions:
             print 'Regions not provided'
         else:
+            regions = pybedtools.BedTool(args.regions)
+            if args.bigwig:
+                count_tags(bw = args.ip[i], features = regions, description = value)
+            else:
+                if len(args.ip) == len(args.ctrl):
+                    bams = {'ip':args.ip[i], 'ctrl':args.ctrl[i]}
+                    print 'Same number of IP and input BAM bams provided. Assuming consistency in listing bams.'
+                    print 'Counting tags for IP: %(ip)s and Input: %(ctrl)s' % bams
+                elif len(args.ctrl) == 1:
+                    bams = {'ip':args.ip[i], 'ctrl':args.ctrl[0]}
+                    print 'Only one input BAM file provided; this is used to correct background noise for all IP BAM bams.'
+                    print 'Counting tags for IP: %(ip)s and Input: %(ctrl)s' % bams
+                else:
+                    print 'Different number of IP and input BAM bams provided. I do not know how these experiments are associated.'
+
+                count_tags(ip = bams['ip'], ctrl = bams['ctrl'], features = regions, description = value)
             'ToDo: read in the peaks and do similar analysis to genes'
 
 # }}}
