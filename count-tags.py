@@ -39,29 +39,6 @@ parser.add_argument('-b', '--bigwig', action='store_true', default=False, help="
 
 args = parser.parse_args()
 
-if args.bigwig is False and args.ctrl is None:
-    parser.error("You have not provided a control file and the -b flag is not set.")
-
-if not args.out_dir.endswith(os.sep):
-    args.out_dir = args.out_dir + os.sep
-
-args.out_dir = args.out_dir + 'profiles/'
-
-# Create plot directory if it doesn't exist
-if not os.path.exists(args.out_dir):
-    os.makedirs(args.out_dir)
-
-pattern = re.compile(".*[I|i]nput.*")
-# Remove any control files passed as ip accidentally
-args.ip = [x for x in args.ip if not pattern.match(x)]
-# Remove any ip files passed as control accidentally
-#args.ctrl = [x for x in args.ctrl if pattern.match(x)]
-
-# Create empty array/list
-basename = []
-for i in args.ip:
-    base = os.path.splitext(os.path.basename(i))[0]
-    basename.append(base)
 #}}}
 
 # Functions# {{{
@@ -211,7 +188,7 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
                     features = features,
                     arrays={'ip': ip_array, 'input': ctrl_array},
                     prefix = basename,
-                    link_features = True,
+                    link_features = False,
                     overwrite = True)
             print "Done"
     else:
@@ -312,6 +289,30 @@ def create_features():
 
 # For each bam calculate signal # {{{
 def main():
+    if args.bigwig is False and args.ctrl is None:
+        parser.error("You have not provided a control file and the -b flag is not set.")
+
+    if not args.out_dir.endswith(os.sep):
+        args.out_dir = args.out_dir + os.sep
+
+    args.out_dir = args.out_dir + 'profiles/'
+    args.out_dir = args.out_dir + os.path.splitext(os.path.basename(args.gtf))[0] + os.sep
+
+    # Create plot directory if it doesn't exist
+    if not os.path.exists(args.out_dir):
+        os.makedirs(args.out_dir)
+
+    pattern = re.compile(".*[I|i]nput.*")
+    # Remove any control files passed as ip accidentally
+    args.ip = [x for x in args.ip if not pattern.match(x)]
+    # Remove any ip files passed as control accidentally
+    #args.ctrl = [x for x in args.ctrl if pattern.match(x)]
+
+    # Create empty array/list
+    basename = []
+    for i in args.ip:
+        base = os.path.splitext(os.path.basename(i))[0]
+        basename.append(base)
 
     print 'Calling create_features() ...'
     features = create_features()
