@@ -19,10 +19,13 @@ args = parser$parse_args()
 
 if(FALSE){
     args = list()
-    args$bed = c("mm10/macs2/sharp/7E12_2i-M2_pooled_filtered_peaks.narrowPeak", "mm10/macs2/sharp/7E12_2i-Chd4_pooled_filtered_peaks.narrowPeak")
+    args$bed = c("/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/macs2/sharp/7E12_EpiSC-M2_filtered_peaks.narrowPeak",
+                 "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/macs2/sharp/7E12_EpiSC-Chd4_filtered_peaks.narrowPeak")
     args$threads = 4
-    args$output_path = "mm10/merged-ranges"
+    args$output_path = "/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/mm10/merged-ranges"
     args$label = 'NA'
+    args$anno = 'NA'
+    args$overlap = -1
 }
 
 plot_path = file.path(args$output_path, "plots")

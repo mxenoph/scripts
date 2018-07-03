@@ -1,4 +1,5 @@
 library = function (...) suppressMessages(base::library(...))
+gg_param = modules::import('ggplots')
 
 # green, hotpink, lime, purple, light pinkish, dark red, mustard, brown, grey, blue
 default_colors = c("#76C2A0","#A94777",
@@ -157,7 +158,7 @@ flag_replicates = function(fs){# {{{
     p = p + scale_y_continuous(expand=c(0,0)) + scale_x_discrete(expand=c(0.02,0))
     # clean look from http://rstudio-pubs-static.s3.amazonaws.com/3364_d1a578f521174152b46b19d0c83cbe7e.html
     # and vertical labels
-    p = p + theme_classic() + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),
+    p = p +  gg_param$theme_publication + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),
                                     axis.line.x=element_blank(),
                                     strip.background = element_rect(colour="white", fill="white"),
                                     legend.position="none")

@@ -63,11 +63,11 @@ get_ensembl_regulatory = function(filters, values, archive = NULL, organism = NU
                    dataset_prefix = 'feature_set'
                    if(grepl('2015', x))  dataset_prefix = 'regulatory_feature'
                    ensembl = useMart(host = x, biomart = 'ENSEMBL_MART_FUNCGEN', dataset = paste(organism, dataset_prefix, sep = '_'))
-#                   regulatory_features = getBM(attributes = attr_to_get[[dataset_prefix]],
-#                                               mart = ensembl)
+                   regulatory_features = getBM(attributes = attr_to_get[[dataset_prefix]],
+                                               mart = ensembl)
                })
     y = lapply(x, function(i){
-                   regulatory_features = getbm(attributes = attr_to_get[[dataset_prefix]],
+                   regulatory_features = getBM(attributes = attr_to_get[[dataset_prefix]],
                                                mart = ensembl)
                })
 

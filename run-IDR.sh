@@ -31,11 +31,11 @@ do
         o ) output_path=${OPTARG} ;;
         n ) OPTIONS=${OPTARG} ;;
         t ) TOP=${OPTARG} ;;
-        a ) psTOP=${OPTARG} ;;
-        b ) ppsTOP=${OPTARG} ;;
+        a ) ps_TOP=${OPTARG} ;;
+        b ) pps_TOP=${OPTARG} ;;
         q ) IDR=${OPTARG} ;;
-        f ) psIDR=${OPTARG} ;;
-        g ) ppsIDR=${OPTARG} ;;
+        f ) ps_IDR=${OPTARG} ;;
+        g ) pps_IDR=${OPTARG} ;;
         h ) usage ;;
         : ) echo "Missing option argument for -$OPTARG" >&2; usage ;;
         \?) echo "Unknown option: -$OPTARG" >&2; usage ;;
@@ -43,11 +43,6 @@ do
     esac
 done
 shift $((OPTIND-1))
-
-if [ -z "$peaks" ] || [ -z "$output_path" ] || [ -z "$pooled" ]
-then
-    usage
-fi
 
 if [ -z "$OPTIONS" ]
 then
@@ -71,9 +66,14 @@ fi
 
 # Path should be the same for all files used in comparisons#{{{
 # It definetely is if data from makefile
+mkdir -p ${output_path}/batch-consistency
+mkdir -p ${output_path}/thresholds
+mkdir -p ${output_path}/final-set
+
 target=$(basename ${peaks[0]} | sed 's/-[^-]*$//g')
 comparisons=()
 num_peaks=()
+
 for i in `seq 1 $((${#peaks[@]}-1))`
 do
     x=$((i+1));
@@ -84,55 +84,61 @@ do
         # the wrong order.
         sort -k 8nr,8nr ${peaks[$((i-1))]} | head -n ${TOP} >  ${peaks[$((i-1))]/_peaks.narrowPeak/_top$(($TOP/1000))K}
         sort -k 8nr,8nr ${peaks[$((j-1))]} | head -n ${TOP} >  ${peaks[$((j-1))]/_peaks.narrowPeak/_top$(($TOP/1000))K}
+        echo  ${peaks[$((i-1))]/_peaks.narrowPeak/_top$(($TOP/1000))K}
         
         base_one=$(basename ${peaks[$((i-1))]} | sed 's/.*-//g' | sed 's/_peaks.*//g')
         base_two=$(basename ${peaks[$((j-1))]} | sed 's/.*-//g' | sed 's/_peaks.*//g')
-        current_comparison=${output_path}/${target}-${base_one}vs${base_two}-${IDR}
+        current_comparison=${output_path}/batch-consistency/${target}-${base_one}vs${base_two}-${IDR}
         echo "ORIGINAL REPS: ${current_comparison}"
 
 #        Rscript ~/local/idrCode/batch-consistency-analysis.r ${peaks[$((i-1))]/_peaks.narrowPeak/_top$(($TOP/1000))K} ${peaks[$((j-1))]/_peaks.narrowPeak/_top$(($TOP/1000))K} -1 "${current_comparison}" ${OPTIONS}
         comparisons+=("${current_comparison}")
         tmp=$(awk -v idr=${IDR} '$11 <= idr {print $0}' "${current_comparison}-overlapped-peaks.txt" | wc -l)
         num_peaks+=(${tmp})
-        echo -e "${current_comparison}\t${tmp}" >> ${output_path}/${target}-${base_one/_*}_original-replicate-thresholds.tsv
-        num_peaks+=($(awk -v idr=${IDR} '$11 <= idr {print $0}' "${output_path}/${target}-${base_one}vs${base_two}-${IDR}-overlapped-peaks.txt" | wc -l))
+
+       if [ -e ${output_path}/thresholds/${target}-${base_one/_*}_original-replicate-thresholds.tsv ] && [ "$i" -eq 1 ]
+       then
+           # Remove file because thresholds are appended to it
+           echo "Removing ${output_path}/thresholds/${target}-${base_one/_*}_original-replicate-thresholds.tsv"
+           rm ${output_path}/thresholds/${target}-${base_one/_*}_original-replicate-thresholds.tsv
+       fi
+#        echo -e "${current_comparison}\t${tmp}" >> ${output_path}/thresholds/${target}-${base_one/_*}_original-replicate-thresholds.tsv
+        num_peaks+=($(awk -v idr=${IDR} '$11 <= idr {print $0}' "${output_path}/batch-consistency/${target}-${base_one}vs${base_two}-${IDR}-overlapped-peaks.txt" | wc -l))
     done
 done
 
-#echo "Batch consistency analysis on ${output_path}" > "${output_path}/${target}-${base_one/_*}.idr"
-
-#Rscript ~/local/idrCode/batch-consistency-plot.r ${#comparisons[@]} "${output_path}/${target}-${base_one/_*}_reps" ${comparisons[*]}
+#Rscript ~/local/idrCode/batch-consistency-plot.r ${#comparisons[@]} "${output_path}/batch-consistency/${target}-${base_one/_*}_reps" ${comparisons[*]}
 
 IFS=$'\n'
 # Original replicate threshold
 original_replicate_thr=$(echo "${num_peaks[*]}" | sort -nr | head -n1)
 echo "ORIGINAL REPLICATE THRESHOLD: ${original_replicate_thr}"
 
-sort -k 8nr,8nr ${pooled} | head -n ${original_replicate_thr} > ${output_path}/$(sed "s/_[^-]*$/_conservative_${IDR}.narrowPeak/g" <<< $(basename ${pooled}))
+#sort -k 8nr,8nr ${pooled} | head -n ${original_replicate_thr} > ${output_path}/final-set/$(sed "s/_[^-]*$/_conservative_${IDR}.narrowPeak/g" <<< $(basename ${pooled}))
 #}}}
 
 # On pseudoreplicates #{{{
-if [ ! -z "$pseudoreps" ] || [ ! -z "$pooled_ps" ]#{{{
+if [ ! -z "$pseudoreps" ] || [ ! -z "$pooled_ps" ]
 then
     echo 'IDR on pseudoreplicates'
-    if [ -z "$psTOP" ]
+    if [ -z "$ps_TOP" ]
     then
-        psTOP=150000
+        ps_TOP=150000
     fi
 
-    if [ -z "$psIDR" ]
+    if [ -z "$ps_IDR" ]
     then
-        psIDR=0.02
+        ps_IDR=0.02
     fi
 
-    if [ -z "$ppsTOP" ]
+    if [ -z "$pps_TOP" ]
     then
-        psTOP=150000
+        ps_TOP=150000
     fi
 
-    if [ -z "$ppsIDR" ]
+    if [ -z "$pps_IDR" ]
     then
-        psIDR=0.02
+        ps_IDR=0.02
     fi
 
     IFS=' ' read -r -a ps00 <<< ${pseudoreps[@]//*pseudoreps01*/}
@@ -144,7 +150,8 @@ then
 
     # just constructing the output name for the self-consistency thresholds file
     output_thr=$(basename ${ps00[0]} | sed 's/.*-//g' | sed 's/_.*//g')
-    output_thr="${output_path}/${target}-${output_thr}_self-consistency-thresholds.tsv"
+    output_thr="${output_path}/thresholds/${target}-${output_thr}_self-consistency-thresholds.tsv"
+
     if [ -e ${output_thr} ]
     then
         # Remove file because thresholds are appended to it
@@ -157,54 +164,54 @@ then
         # truncate list of relaxed pseudoreps
         # ToDO: this is hard-coded so if p-value not used as threshold for the peak calling it will be 
         # the wrong order. Either 
-        sort -k 8nr,8nr ${ps00[$((i-1))]} | head -n ${psTOP} >  ${ps00[$((i-1))]/_peaks.narrowPeak/_top$(($psTOP/1000))K}
-        sort -k 8nr,8nr ${ps01[$((i-1))]} | head -n ${psTOP} >  ${ps01[$((i-1))]/_peaks.narrowPeak/_top$(($psTOP/1000))K}
+#        sort -k 8nr,8nr ${ps00[$((i-1))]} | head -n ${ps_TOP} >  ${ps00[$((i-1))]/_peaks.narrowPeak/_top$(($ps_TOP/1000))K}
+#        sort -k 8nr,8nr ${ps01[$((i-1))]} | head -n ${ps_TOP} >  ${ps01[$((i-1))]/_peaks.narrowPeak/_top$(($ps_TOP/1000))K}
             
         base_one=$(basename ${ps00[$((i-1))]} | sed 's/.*-//g' | sed 's/_peaks.*//g')
         base_two=$(basename ${ps01[$((i-1))]} | sed 's/.*-//g' | sed 's/_peaks.*//g')
-        current_comparison=${output_path}/${target}-${base_one}vs${base_two}-${psIDR}
+        current_comparison=${output_path}/batch-consistency/${target}-${base_one}vs${base_two}-${ps_IDR}
         echo ${current_comparison}
 
-#        Rscript ~/local/idrCode/batch-consistency-analysis.r ${peaks[$((i-1))]/_peaks.narrowPeak/_top$(($TOP/1000))K} ${peaks[$((j-1))]/_peaks.narrowPeak/_top$(($TOP/1000))K} -1 "${current_comparison}" ${OPTIONS}
-        Rscript ~/local/idrCode/batch-consistency-analysis.r ${ps00[$((i-1))]/_peaks.narrowPeak/_top$(($psTOP/1000))K} ${ps01[$((i-1))]/_peaks.narrowPeak/_top$(($psTOP/1000))K} -1 "${current_comparison}" ${OPTIONS}
+        Rscript ~/local/idrCode/batch-consistency-analysis.r ${ps00[$((i-1))]/_peaks.narrowPeak/_top$(($ps_TOP/1000))K} ${ps01[$((i-1))]/_peaks.narrowPeak/_top$(($ps_TOP/1000))K} -1 "${current_comparison}" ${OPTIONS}
+        ls ${current_comparison}*
         comparisons+=("${current_comparison}")
-#        tmp=$(awk -v idr=${psIDR} '$11 <= idr {print $0}' "${current_comparison}-overlapped-peaks.txt" | wc -l)
-        num_peaks+=(${tmp})
-        echo -e "${current_comparison}\t${tmp}" >> ${output_path}/${target}-${base_one/_*}_self-consistency-thresholds.tsv
+        tmp=$(awk -v idr=${ps_IDR} '$11 <= idr {print $0}' "${current_comparison}-overlapped-peaks.txt" | wc -l)
+        num_pseudoreps+=(${tmp})
+        echo -e "${current_comparison}\t${tmp}" >> ${output_path}/thresholds/${target}-${base_one/_*}_self-consistency-thresholds.tsv
 
     done
     exit
-    Rscript ~/local/idrCode/batch-consistency-plot.r ${#comparisons[@]} "${output_path}/${target}-${base_one/_*}_pseudoreps" ${comparisons[*]}
+    Rscript ~/local/idrCode/batch-consistency-plot.r ${#comparisons[@]} "${output_path}/batch-consistency/${target}-${base_one/_*}_pseudoreps" ${comparisons[*]}
 
     echo "IDR on pooled pseudoreplicates"
-    sort -k 8nr,8nr ${pooled_ps[0]} | head -n ${ppsTOP} >  ${pooled_ps[0]/_peaks.narrowPeak/_top$(($ppsTOP/1000))K}
-    sort -k 8nr,8nr ${pooled_ps[1]} | head -n ${ppsTOP} >  ${pooled_ps[1]/_peaks.narrowPeak/_top$(($ppsTOP/1000))K}
+    sort -k 8nr,8nr ${pooled_ps[0]} | head -n ${pps_TOP} >  ${pooled_ps[0]/_peaks.narrowPeak/_top$(($pps_TOP/1000))K}
+    sort -k 8nr,8nr ${pooled_ps[1]} | head -n ${pps_TOP} >  ${pooled_ps[1]/_peaks.narrowPeak/_top$(($pps_TOP/1000))K}
     
     base_one=$(basename ${pooled_ps[0]} | sed 's/.*-//g' | sed 's/_peaks.*//g')
     base_two=$(basename ${pooled_ps[1]} | sed 's/.*-//g' | sed 's/_peaks.*//g')
-    current_comparison=${output_path}/${target}-${base_one}vs${base_two}-${ppsIDR}
-    Rscript ~/local/idrCode/batch-consistency-analysis.r ${pooled_ps[0]/_peaks.narrowPeak/_top$(($ppsTOP/1000))K} ${pooled_ps[1]/_peaks.narrowPeak/_top$(($ppsTOP/1000))K} -1 "${current_comparison}" ${OPTIONS}
-    Rscript ~/local/idrCode/batch-consistency-plot.r 1 "${output_path}/${target}-${base_one/_*}_pooled_pseudoreps" ${current_comparison}
+    current_comparison=${output_path}/batch-consistency/${target}-${base_one}vs${base_two}-${pps_IDR}
+    Rscript ~/local/idrCode/batch-consistency-analysis.r ${pooled_ps[0]/_peaks.narrowPeak/_top$(($pps_TOP/1000))K} ${pooled_ps[1]/_peaks.narrowPeak/_top$(($pps_TOP/1000))K} -1 "${current_comparison}" ${OPTIONS}
+    Rscript ~/local/idrCode/batch-consistency-plot.r 1 "${output_path}/batch-consistency/${target}-${base_one/_*}_pooled_pseudoreps" ${current_comparison}
 
-    pooled_replicate_thr=$(awk -v idr=${ppsIDR} '$11 <= idr {print $0}' "${current_comparison}-overlapped-peaks.txt" | wc -l)
+    pooled_replicate_thr=$(awk -v idr=${pps_IDR} '$11 <= idr {print $0}' "${current_comparison}-overlapped-peaks.txt" | wc -l)
     
     # just constructing the output name for the pooled-consistency thresholds file
-    if [ -e "${output_path}/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv" ]
+    if [ -e "${output_path}/thresholds/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv" ]
     then
         # Remove file because thresholds are appended to it
-        echo "Removing ${output_path}/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv"
-        rm ${output_path}/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv
+        echo "Removing ${output_path}/thresholds/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv"
+        rm ${output_path}/thresholds/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv
     fi
 
-    echo -e "${current_comparison}\t${tmp}" >> ${output_path}/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv
-    echo "POOLED REPLICATE THRESHOLD: ${original_replicate_thr}"
+    echo -e "${current_comparison}\t${pooled_replicate_thr}" >> ${output_path}/thresholds/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv
+    echo "POOLED REPLICATE THRESHOLD: ${pooled_replicate_thr}"
 
     IFS=$'\n'
     # Pooled pseudoreplicate threshold
-    optimal_thr=$(echo "${pooled_replicate_thr}" "${original_replicate_thr}" | sort -nr | head -n1)
-    echo "OPTIMAL THRESHOLD: ${original_replicate_thr}"
+    optimal_thr=$(cut -f 2 ${output_path}/thresholds/${target}-${base_one/_*}_pooled-consistency-thresholds.tsv ${output_path}/thresholds/${target}-${base_one/_*}_original-replicate-thresholds.tsv | sort -nr | head -n 1)
+    echo "OPTIMAL THRESHOLD: ${optimal_thr}"
 
-    sort -k 8nr,8nr ${pooled} | head -n ${original_replicate_thr} > ${output_path}/$(sed "s/_[^-]*$/_optimal_${IDR}.narrowPeak/g" <<< $(basename ${pooled}))
+    sort -k 8nr,8nr ${pooled} | head -n ${optimal_thr} > ${output_path}/final-set/$(sed "s/_[^-]*$/_optimal_${IDR}.narrowPeak/g" <<< $(basename ${pooled}))
 
 fi
 #}}}

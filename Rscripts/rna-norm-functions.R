@@ -53,7 +53,7 @@ counts_to_TPM = function(counts, effective_length){
            stop('Counts and effective lengths are not calculated on the same features')
 
         tpms = as.data.frame(counts) %>% 
-                mutate_each(funs(exp((log(. / effective_length)) - log(sum(exp(log(. / effective_length)))) + log(1e6))))
+                mutate_all(funs(exp((log(. / effective_length)) - log(sum(exp(log(. / effective_length)))) + log(1e6))))
         rownames(tpms) = rownames(counts)
         tpms
     }

@@ -6,6 +6,7 @@ library("gridBase")
 library("gridExtra")
 library("RColorBrewer")
 library("reshape")
+library("ggrepel")
 
 # green, hotpink, lime, purple, light pinkish, dark red, mustard, brown, grey, blue
 default_colors = c("#76C2A0","#A94777",
@@ -39,6 +40,7 @@ heatmap.2 = function (...)
         gplots::heatmap.2(..., trace = 'none', density.info = 'none',
                           col = divergent_colors, margins = c(12,12))
 
+gg_param = modules::import('ggplots')
 ### FUNCTIONS ###
 # create a master file with all counts from the counts directory# {{{
 export_counts = function(counts_path) {
@@ -90,7 +92,7 @@ reset_par = function(){
 plot_counts = function(eset, counts, design,
                         # colors should be a named vector
                        contrast = "Contrast", colors,
-                       scaled = T, type = NULL, rld){
+                       scaled = T, type = NULL, rld, gene_mapping){
 
     library(gtools)
     # If missing create eset from counts# {{{
@@ -153,12 +155,39 @@ plot_counts = function(eset, counts, design,
         (data = DESeq2::plotPCA(rld, intgroup = keep_groups, returnData=TRUE))
         variance = round(100 * attr(data, "percentVar"))
         p = ggplot(data, aes(PC1, PC2, color = mixedsort(get(contrast)))) + geom_point(size = 3)
+        p = p + coord_equal()
         p = p + scale_color_manual(values = colors)
         p = p + labs(x = paste0("PC1: ", variance[1],"% variance"), 
                      y = paste0("PC2: ", variance[2],"% variance"),
                      title = "PCA on rlog(counts)",
                      color = contrast)
+        p = p + gg_param$theme_publication + theme(aspect.ratio = 1)
         print(p)
+
+        rv = rowVars(assay(rld))
+        select_rv = order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
+        pca = prcomp(t(assay(rld)[select_rv, ]))
+        pcs = data.frame(samples = row.names(pca$x), pca$x)
+        data_rot = data.frame(ensembl_gene_id = rownames(pca$rotation), pca$rotation)
+        data_rot = gene_mapping %>% select(ensembl_gene_id, external_gene_id) %>% right_join(data_rot,
+                                                                                             by = "ensembl_gene_id")
+        mult = min(
+                   (max(pcs[,'PC2']) - min(pcs[,'PC2']) / (max(data_rot[,'PC2']) - min(data_rot[,'PC2']))),
+                   (max(pcs[,'PC1']) - min(pcs[,'PC1']) / (max(data_rot[,'PC1']) - min(data_rot[,'PC1']))))
+        data_rot = transform(data_rot,
+                             v1 = .7 * mult * (get('PC1')),
+                             v2 = .7 * mult * (get('PC2')))
+
+        q = p + geom_segment(data=data_rot[6:nrow(data_rot),], aes(x = 0, y = 0, xend = v1, yend = v2),
+                             arrow = arrow(length = unit(0.2, "cm")), alpha = 0.75, color = "grey")
+        q = q + geom_segment(data=data_rot[1:5,], aes(x = 0, y = 0, xend = v1, yend = v2),
+                             arrow = arrow(length = unit(0.2, "cm")), alpha = 0.5, color = "red3")
+        q = q + geom_label_repel(data = data_rot[1:5,], aes(x = v1, y = v2, label = external_gene_id), inherit.aes = F,
+                                 label.size = NA, fill = NA, colour = "red3")
+        q = q + gg_param$theme_publication + theme(aspect.ratio = 1)
+        print(q)
+
+        return(data_rot)
     }# }}}
 
     # Calculates disctance from rld object by default otherwise calculates and plots correlation# {{{# {{{
@@ -212,7 +241,7 @@ plot_counts = function(eset, counts, design,
     # Creating all library combinations
     if(!missing(rld)){
         print('Rlog transformed data provided...')
-        format_rld_pca()
+        rotations = format_rld_pca()
         reset_par()
         format_dheatmap(rld)
     } else {
@@ -220,7 +249,7 @@ plot_counts = function(eset, counts, design,
         
     }
     reset_par()
-    return()
+    return(rotations)
 } 
 # }}}
 

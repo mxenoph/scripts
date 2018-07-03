@@ -1,6 +1,5 @@
- #!/usr/bin/env Rscript --slave
+#!/usr/bin/env Rscript
 
-# Parsing command line arguments and create output subdirectories# {{{
 library(argparse)
 library(tools)
 
@@ -17,15 +16,20 @@ dir.create(plot_path, recursive= TRUE)
 
 if(FALSE){
     args = list()
-    args$config = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/for_poster/../../config/tf_modifications_mm10_esc-episc.conf'
-    args$out = '/nfs/research2/bertone/user/mxenoph/hendrich/chip/hendrich_2013/for_poster'
-    args$label = 'esc-episc-mods'
+    args$config = '/nfs/research2/bertone/user/mxenoph/hendrich/thesis/corr-plot-esc.config'
+    args$out = '/nfs/research2/bertone/user/mxenoph/hendrich/thesis'
+    args$label = 'esc-matrix'
 }
-# }}}}
 
+# Import libraries & Turn off warning messages for loading the packages-globally# {{{
+suppress = base::suppressPackageStartupMessages
+options(warn=-1)
 x = c('GenomicRanges', 'rtracklayer', 'plyr', 'tools', 'corrplot')
 lapply(x, suppressMessages(library), character.only=T)
 source("~/source/Rscripts/ggplot-functions.R")
+source("~/source/Rscripts/granges-functions.R")
+#Turn warnings back on
+options(warn=0)
 
 # Local functions# {{{
 cor_mtest = function(mat, conf_level = 0.95) {# {{{
@@ -88,7 +92,6 @@ conf = read.table(args$config, header=T, sep="\t")
 factors = as.character(apply( conf[ , c('Condition', 'factor') ] , 1 , paste , collapse = ":" ))
 factors = toupper(factors)
 
-source("~/source/Rscripts/granges-functions.R")
 peaks = GRangesList() # {{{
 for (indx in 1:length(conf[['file']])) {
 #    if (grepl('peaks', as.character(conf[['file']])[indx])){
@@ -107,8 +110,12 @@ for (indx in 1:length(conf[['file']])) {
      if(grepl('.bed', as.character(as.character(conf[['file']])[indx]))){
          ranges = rtracklayer::import.bed(as.character(conf[['file']])[indx])
      } else{
-         ranges = match.fun(paste('import', file_ext(as.character(conf[['file']])[indx]), sep = '_'))(as.character(conf[['file']])[indx])
-         if(file_ext(as.character(conf[['file']])[indx]) == 'gappedPeak') ranges = ranges$blocks[width(ranges$blocks) > 10]
+         if(file_ext(as.character(conf[['file']])[indx]) == 'gappedPeak') {
+             ranges = match.fun(paste('import', file_ext(as.character(conf[['file']])[indx]), sep = '_'))(as.character(conf[['file']])[indx])
+             ranges = ranges$blocks[width(ranges$blocks) > 10]
+         } else {
+             ranges = match.fun(paste('import', file_ext(as.character(conf[['file']])[indx]), sep = '_'))(as.character(conf[['file']])[indx])
+         }
      }
     
     # Getting rid of tags in contigs if present
@@ -164,14 +171,17 @@ x = factor(gsub(":.*", "", colnames(M.hc)))
 
 tlcol = as.character(mapvalues(x,
                                 from= levels(x),
-                                to= gg_color_hue(length(levels(x)))))
-label = gg_color_hue(length(levels(x)))
+#                                to= gg_color_hue(length(levels(x)))))
+                                to= c("#336699", "#663399")))
+#label = gg_color_hue(length(levels(x)))
+label = c("#336699", "#663399")
 names(label) = levels(x)
 
 colnames(M.hc) = gsub(".*:", "", colnames(M.hc))
 rownames(M.hc) = gsub(".*:", "", rownames(M.hc))# }}}
 
 # Print plots# {{{
+pdf.options(encoding = 'ISOLatin2.enc')
 pdf(file.path(plot_path, paste0(args$label, "-CorrelationPlot.pdf")), paper='a4')
 
     corrplot(M, method="color", type="lower",# {{{
@@ -191,12 +201,14 @@ pdf(file.path(plot_path, paste0(args$label, "-CorrelationPlot.pdf")), paper='a4'
     legend('topright', names(label), text.col=as.character(label), bty='n')
     # }}}
 
-    corrplot.mixed(M, lower = "color", upper = "number", # {{{
-#             order="original", tl.col=tlcol, tl.cex=0.3, tl.srt=45,
-             order="hclust", tl.col=tlcol, tl.cex=0.3, tl.srt=45,
-             addrect=4, col=colorRampPalette(col)(200))
+    corrplot(M, p.mat= p_values[[1]], sig.level=p_cutoff, method = "color", # {{{
+#             order="hclust", tl.cex=1, tl.col = "black", tl.srt=90, number.digits = 2,
+             order="hclust", tl.col=tlcol, tl.cex=1, tl.srt=90, number.digits = 2,
+             number.cex = 0.5, cl.cex = 1,
+             addCoef.col="grey", addrect=6, col=colorRampPalette(col)(200))
     
-    legend('topleft', names(label), text.col=as.character(label), bty='n')# }}}
+    legend('topright', names(label), text.col=as.character(label), bty='n')
+    # }}}
 
     # Combine with a significant test. Provide the matrix of correlation but also a matrix of p-val for all correlations computed# {{{# {{{
     # sig.level is the top value a p-val is considered significant

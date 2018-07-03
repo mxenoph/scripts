@@ -29,9 +29,7 @@ ${qc_path}%.enrichment: ${map_path}%.bam
 	${bsub} -n 4 "perl ~/source/check-chip-enrichment.pl ${reference}/${assembly}.fa.fai 1000 $< > $@"
 
 ${qc_path}/plots/%.png: ${qc_path}/%.enrichment
-	$(eval base := $(shell echo $(notdir $*) | sed 's/-.*//g'))
-	$(eval index := $(shell echo $(notdir $*) | sed 's/.*_//g'))
-	$(eval target_ctrl := $(call format-ctrl,$(call get-ctrl,${map_path},$(call get-base,$*),$(call get-ctrl-type,$*),${input})))
+	$(eval target_ctrl := $(call KEEP,$(call get-base,$*),$(call KEEP,$(call get-ctrl-type,$*)_,${enrichment_files})))
 	${bsub} -M ${memlimit} "Rscript ~/source/plot-chip-enrichment.R -b $< $(target_ctrl) -o $(dir $(@D))"
 
 # }}}
@@ -44,10 +42,11 @@ correlation_sets := $(patsubst %.pdf, %, ${sample_correlation})
 define COR
 
 $(1).sample-correlation: $(call KEEP,ddup,$(call KEEP,$(notdir $(1)),${bigwig}))
-	@echo $$^ | tr ' ' '\n' > $(1).tmp
-	Rscript -e "a=read.delim('$(1).tmp', stringsAsFactors=F); a=a[[1]]; b=as.data.frame(t(combn(a,2))); write.table(b, '$(1).pairwise-combn', col.names=F, row.names=F, sep=' ', quote=F)"
-	${bsub} run-bigWigCorrelate-on-pairs.sh $(1).pairwise-combn $(1).sample-correlation
-	rm $(1).tmp
+#	@echo $$^ | tr ' ' '\n' > $(1).tmp
+	@echo $$^ | tr ' ' '\n' #> $(1).tmp
+#	Rscript -e "a=read.delim('$(1).tmp', stringsAsFactors=F); a=a[[1]]; b=as.data.frame(t(combn(a,2))); write.table(b, '$(1).pairwise-combn', col.names=F, row.names=F, sep=' ', quote=F)"
+#	${bsub} run-bigWigCorrelate-on-pairs.sh $(1).pairwise-combn $(1).sample-correlation
+#	rm $(1).tmp
 
 $(1).pdf: $(1).sample-correlation
 	${bsub} "Rscript ~/source/plot-bw-correlation.R -s $(1).sample-correlation"

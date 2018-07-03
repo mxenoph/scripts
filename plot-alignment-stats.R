@@ -23,6 +23,7 @@ library(ggplot2)
 library(reshape)
 library(dplyr)
 library(tidyr)
+gg_param = modules::import('ggplots')
 
 for(f in args$file){
     bowtie = read.table(f, sep = "\t", header = TRUE)
@@ -80,7 +81,8 @@ for(f in args$file){
     for (cond in levels(plot_data$condition)){
         q = ggplot(aes(x =ID, y = value / 1000000, fill = variable), data = subset(plot_data, condition == cond))
         q = q + geom_bar(stat = "identity", width = .3, position = 'dodge')
-        q = q + theme_bw()
+#        q = q + theme_bw()
+        q = q+ gg_param$theme_publication
         q = q + theme(axis.line = element_line(colour = "black"),
                       panel.grid.major.x = element_blank(),
                       panel.grid.major.y = element_line(),
@@ -111,8 +113,9 @@ for(f in args$file){
 
     q = ggplot(aes(x =ID, y = value, fill = variable, order = variable), data = plot_data)
     q = q + geom_bar(stat = "identity", width = .3)
-    q = q + theme_bw()
+#    q = q + theme_bw()
     q = q + coord_flip()
+    q = q + gg_param$theme_publication
     q = q + theme(axis.line = element_line(colour = "black"),
                   panel.grid.major.x = element_line(),
                   panel.grid.major.y = element_blank(),

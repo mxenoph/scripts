@@ -39,9 +39,11 @@ plot_path = args.path + 'plots/'
 if not os.path.exists(plot_path):
     os.makedirs(plot_path)
 
-array_order = ['5000-gene_start.npz', 'genes-filtered.npz', 'gene_end-5000.npz']
-tmp = [ os.path.join(args.path, f) for f in os.listdir(args.path) if f.endswith(".npz") and fnmatch.fnmatch(f, args.matching)]
-tmp = [ f for f in tmp if f.endswith('.5000-gene_start.npz') or f.endswith('.genes-filtered.npz') or f.endswith('.gene_end-5000.npz')]
+#array_order = ['5000-gene_start.npz', 'genes-filtered.npz', 'gene_end-5000.npz']
+array_order = ['2000-gene_start.npz', 'genes-filtered.npz', 'gene_end-500.npz']
+tmp = [ os.path.join(args.path, f) for f in os.listdir(args.path) if f.endswith(".npz") and fnmatch.fnmatch(f, args.matching) ]
+#tmp = [ f for f in tmp if f.endswith('.5000-gene_start.npz') or f.endswith('.genes-filtered.npz') or f.endswith('.gene_end-5000.npz') ]
+tmp = [ f for f in tmp if f.endswith('.2000-gene_start.npz') or f.endswith('.genes-filtered.npz') or f.endswith('.gene_end-500.npz') ]
 assert len(tmp) == 3, \
         'Input arrays provided are not 3.'
 
@@ -284,14 +286,24 @@ def plot_metagene(narray, features, label = None, fsets = None):
     window = np.append(window, np.linspace(10000,15000,500))
     arguments['x'] = window
 
+#    ticks, tick_labels, alignment = zip(*[
+#        (-5000, '-5kb', 'right'),
+#        (0, 'TSS', 'center'),
+#        (2500, '', 'center'),
+#        (5000, '50%', 'center'),
+#        (7500, '', 'center'),
+#        (10000, 'TTS', 'center'),
+#        (15000, '5kb', 'left'),
+#        ])
+#    
     ticks, tick_labels, alignment = zip(*[
-        (-5000, '-5kb', 'right'),
+        (-2000, '-2kb', 'right'),
         (0, 'TSS', 'center'),
         (2500, '', 'center'),
         (5000, '50%', 'center'),
         (7500, '', 'center'),
         (10000, 'TTS', 'center'),
-        (15000, '5kb', 'left'),
+        (10500, '500b', 'left'),
         ])
 
     # }}}
@@ -576,9 +588,12 @@ def main():
         from metaseq import persistence
         features, arrays = persistence.load_features_and_arrays(prefix = npz)
        
-        # Normalize IP to the control
-        normalised = arrays['ip'] - arrays['input']
-        normalised_arrays[os.path.basename(npz)] = normalised
+        if 'bw' in arrays:
+            normalised_arrays[os.path.basename(npz)] = arrays['bw']
+        else:
+            # Normalize IP to the control
+            normalised = arrays['ip'] - arrays['input']
+            normalised_arrays[os.path.basename(npz)] = normalised
     
     narray = np.concatenate((normalised_arrays[normalised_arrays.keys()[0]], normalised_arrays[normalised_arrays.keys()[1]], normalised_arrays[normalised_arrays.keys()[2]]), axis=1)
 

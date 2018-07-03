@@ -161,7 +161,7 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
                     features = features,
                     arrays={'bw': bw_array},
                     prefix = basename,
-                    link_features = False,
+                    link_features = True,
                     overwrite = True)
             print "Done"
         else:
@@ -198,24 +198,27 @@ def count_tags(features, description, bw = None, ip = None, ctrl = None):
 
 # # Create database from ensembl GTF if it does not already exist# {{{
 def create_features():
+    import warnings
     gff_filename = args.gtf
     db_filename = gff_filename + '.db'
     
     if not os.path.exists(db_filename):
         gffutils.create_db(gff_filename, db_filename)
-    
-    try:
-        db = gffutils.FeatureDB(db_filename)
-    except:
-        if cmp_version(gffutils.__version__, '0.8.7.1') >= 0:
-            print 'Potential reason for .FeatureDB() failing is newer gffutils version run on older database.'
-            # Running sqlite3 ANALYZE on database and saving to file
-            import sqlite3
-            conn = sqlite3.connect(db_filename)
-            c = conn.cursor()
-            c.execute("ANALYZE")
-            conn.commit()
-            conn.close()
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error')
+        try:
+            db = gffutils.FeatureDB(db_filename)
+        except:
+            if cmp_version(gffutils.__version__, '0.8.7.1') >= 0:
+                print 'Potential reason for .FeatureDB() failing is newer gffutils version run on older database.'
+                # Running sqlite3 ANALYZE on database and saving to file
+                import sqlite3
+                conn = sqlite3.connect(db_filename)
+                c = conn.cursor()
+                c.execute("ANALYZE")
+                conn.commit()
+                conn.close()
 
             db = gffutils.FeatureDB(db_filename)
     

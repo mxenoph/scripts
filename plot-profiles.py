@@ -286,9 +286,14 @@ def main():
         from metaseq import persistence
         features, arrays = persistence.load_features_and_arrays(prefix = npz)
        
-        # Normalize IP to the control
-        normalised = arrays['ip'] - arrays['input']
-        normalised_arrays[os.path.basename(npz)] = normalised
+        # If count-tags was run on a bigwig file then arrays will contain only the
+        # bw key
+        if 'bw' in arrays:
+            normalised_arrays[os.path.basename(npz)] = arrays['bw']
+        else:
+            # Normalize IP to the control
+            normalised = arrays['ip'] - arrays['input']
+            normalised_arrays[os.path.basename(npz)] = normalised
         
     # Set ensures that the values in list are unique
     # http://stackoverflow.com/questions/12897374/get-unique-values-from-a-list-in-python
@@ -384,7 +389,7 @@ def main():
                     bins = int(downstream)/10
             else:
                 # gene array goes from o) to 100% in bins of 100bp
-                x = np.linspace(0, 100, 100)
+                x = np.linspace(0, 100, 1000)
             plot_average(per_feature_type[key], x, pp = pp, feature_type = key)
         else:
             print 'Can not plot experiment together. Tags calculated on different windows'

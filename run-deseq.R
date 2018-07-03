@@ -141,12 +141,21 @@ if (! file.exists(paste0(file_path_sans_ext(args$gtf), '.ensembl2gene_name.tsv')
 pdf(file.path(plot_path, paste0(label, '.pdf')), paper='a4')
 # Running DE and plotting# {{{
 dds = DESeq(cds)
+
+# Adding metadata to dds{{{
+gene_names = gene_names[match(rownames(dds), gene_names$ensembl_gene_id),]
+if(all(rownames(dds) == gene_names$ensembl_gene_id)){
+   mcols(dds) = cbind(mcols(dds), gene_names[,'external_gene_id', drop = F])
+} else {
+    warning('MGI gene names provided for ensembl IDs cannot be added.')
+}# }}}
+
 rld = rlog(dds)
 source("~/source/Rscripts/deseq-functions.R")
 # calls plot_counts from deseq-functions to plot counts distributions,
 # pca and correlation heatmap for the contrast selected
 plot_counts(counts = norm_counts, design = design, type = 'Normalised by SF')
-plot_counts(counts = norm_counts, design = design, type = 'Rlog', rld = rld)
+plot_counts(counts = norm_counts, design = design, type = 'Rlog', rld = rld, gene_mapping = gene_names)
 
 res = results(dds)
 plotDispEsts(dds)

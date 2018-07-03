@@ -20,6 +20,7 @@ library(ggplot2)
 library(gridExtra)
 # needed for the use of percent in x axis labels
 library(scales)
+gg_param = modules::import('ggplots')
 # }}}
 
 enrichment = do.call(rbind,
@@ -44,12 +45,14 @@ if (all(validity == validity[1])){
 
     p = ggplot(enrichment, aes(x=bin, y=cum_reads, colour=ID))
     p = p + geom_line(size=1) + scale_x_continuous(labels = seq(from=0.2,to=1,by=0.2), breaks = breaks)
-    p = p + labs(x="Percentage of bins", y="Cumulative percentage of mapped reads") + theme_classic()
-    p + theme(legend.justification=c(0,1), legend.position=c(0,1))
+    p = p + gg_param$theme_publication + labs(x = "Percentage of bins", y = "Cumulative percentage of mapped reads", fill = 'ChIP-seq')
+    p + theme(legend.justification=c(0,1), legend.position=c(0,1), aspect.ratio = 1) + ggtitle(paste0(basename(file_path_sans_ext(args$bin[1]))))
 } else {
     p = ggplot(enrichment, aes(x=bin, y=cum_reads))
     p = p + geom_line(size=1) + scale_x_continuous(labels=percent) + facet_grid(. ~ ID)
-    p = p + labs(x="bin", y="Cumulative percentage of mapped reads") + theme_classic()
-    p
+    p = p + gg_param$theme_publication + labs(x = "Percentage of bins", y = "Cumulative percentage of mapped reads", fill = 'ChIP-seq')
+#    p = p + labs(x="bin", y="Cumulative percentage of mapped reads") + theme_classic() + theme(aspect.ratio = 1)
+    p + ggtitle(paste0(basename(file_path_sans_ext(args$bin[1]))))
+    
 }
 dev.off()
